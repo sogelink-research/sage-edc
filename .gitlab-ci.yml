@@ -1,0 +1,389 @@
+###############################################################################
+# GitLab CI/CD — Deploy PSNC EDC MVDS to GKE / Rancher
+#
+# This pipeline clones the psnc-edc-mvds repository and uses its Kubernetes
+# deployment instructions (Ansible playbooks + scripts) to deploy the full
+# EDC connector stack to your cluster.
+#
+# Prerequisites — set as CI/CD Variables (Settings → CI/CD → Variables):
+#
+#   KUBECONFIG_B64              base64-encoded kubeconfig for your GKE/Rancher cluster
+#   K8S_NAMESPACE               target namespace (e.g. edc-connector)
+#   CONNECTOR_ID                unique connector instance identifier
+#
+#   CONNECTOR_HOST              public host for connector
+#   DASHBOARD_HOST              public host for dashboard
+#   KEYCLOAK_HOST               public host for keycloak         (if enabled)
+#   IDENTITY_HUB_HOST           public host for identity hub     (if enabled)
+#   STORAGE_HOST                public host for storage          (if enabled)
+#   CONSUMER_BACKEND_HOST       public host for consumer backend (if enabled)
+#   KEYVAULT_HOST               public host for vault            (if enabled)
+#
+#   ISSUER_DID                  dataspace issuer DID
+#   FEDERATED_CATALOG_ADDR      federated catalog URL
+#   DATA_SPACE_HUB_ADDR         data-space-hub URL
+#   CATALOG_API_KEY             catalog API key (can be empty)
+#   DSH_API_KEY                 data-space-hub API key (can be empty)
+#
+#   DOCKERHUB_USER              Docker Hub username  (for image pull secret)
+#   DOCKERHUB_TOKEN             Docker Hub access token
+#   DOCKERHUB_EMAIL             Docker Hub email
+#
+#   IMAGE_TAG                   image tag to deploy (default: latest)
+#
+#   ENABLE_IDENTITY_PROVIDER    true/false (default: true)
+#   ENABLE_IDENTITY_HUB         true/false (default: true)
+#   ENABLE_STORAGE              true/false (default: true)
+#
+# Secrets — generate with: openssl rand -base64 32 | tr -d '\n'
+#   CONNECTOR_DB_PASSWORD
+#   KEYCLOAK_DB_PASSWORD
+#   KEYCLOAK_ADMIN_PASSWORD
+#   IDENTITY_HUB_DB_PASSWORD
+#   API_AUTH_KEY
+#   IH_API_SUPERUSER_KEY        format: base64(user).base64(secret) — see generation command below
+#   RUSTFS_ACCESS_KEY
+#   RUSTFS_SECRET_KEY
+#   STS_CLIENT_SECRET
+###############################################################################
+
+variables:
+  IMAGE_TAG: "latest"
+  ENABLE_IDENTITY_PROVIDER: "true"
+  ENABLE_IDENTITY_HUB: "false"
+  ENABLE_STORAGE: "true"
+  ANSIBLE_FORCE_COLOR: "true"
+  # Upstream repo containing the deployment playbooks
+  EDC_REPO_URL: "https://github.com/psnc-edc/psnc-edc-mvds.git"
+  EDC_REPO_REF: "master"
+  # Path inside the cloned repo where the K8s instructions live
+  DEPLOY_SUBDIR: deployment/instruction/kubernetes
+
+  # ---- deployment target ----
+  K8S_NAMESPACE: "research-services"
+  CONNECTOR_ID: "sogelink"
+
+  # ---- public hostnames ----
+  CONNECTOR_HOST: "sogelink.edc.beta.geodan.nl"
+  DASHBOARD_HOST: "sogelink.edc-dashboard.beta.geodan.nl"
+  KEYCLOAK_HOST: "sogelink.edc-keycloak.beta.geodan.nl"
+  IDENTITY_HUB_HOST: "sogelink.edc-identity.beta.geodan.nl"
+  STORAGE_HOST: "sogelink.edc-storage.beta.geodan.nl"
+  CONSUMER_BACKEND_HOST: "sogelink.edc-consumer.beta.geodan.nl"
+  KEYVAULT_HOST: "sogelink.edc-vault.beta.geodan.nl"
+
+  # ---- dataspace-provided (REQUIRED — get from your dataspace authority) ----
+  # ISSUER_DID: ""                  # e.g. did:web:your-dataspace-issuer
+  # FEDERATED_CATALOG_ADDR: ""      # e.g. https://federated-catalog.your-dataspace.org
+  # DATA_SPACE_HUB_ADDR: ""         # e.g. https://data-space-hub.your-dataspace.org
+
+  # ---- secrets (move to masked CI/CD variables before production!) ----
+  CONNECTOR_DB_PASSWORD: "WUUpKKF7kb7vbEe88C6TwxcACGAtOu0Zj/cnjNrwppI="
+  KEYCLOAK_DB_PASSWORD: "SG4+Jd0RiUsCLOcZ6QqnvN/lxQgkStCXyTBQrU6CGV8="
+  KEYCLOAK_ADMIN_PASSWORD: "p29Lj7sPQjdXSpI0H1/cM5addDWzpNrFgqcv/jgtfNw="
+  IDENTITY_HUB_DB_PASSWORD: "oNMWUsoTFWFNOnlIjaRDbdEzoAfxN9Y3/5EQtjsuy34="
+  API_AUTH_KEY: "B9NiU5D2RYf+tPhJIeweVzg3UHGGJmPhYlghSWyrMMQ="
+  # Generate with: IH_USER="super-user"; IH_SECRET="$(openssl rand -base64 32 | tr -d '\r\n')"; printf '%s.%s\n' "$(printf '%s' "$IH_USER" | openssl base64 -A)" "$(printf '%s' "$IH_SECRET" | openssl base64 -A)"
+  IH_API_SUPERUSER_KEY: "c3VwZXItdXNlcg==.WUwzMFhIMUZkRjFkdmx3NGs4a0ZsUEhpZVlSOFlTL3NCd3pnSU1XM3VZUT0="
+  RUSTFS_ACCESS_KEY: "j3nv+cwioReCZRD05Qqlt4ukfu6Z/3ZP2SdTl2+xWSA="
+  RUSTFS_SECRET_KEY: "IEkMi4o0RGykXFk/HIIzZN0UDokOKMBAmxY19z07Bno="
+
+stages:
+  - prepare
+  - deploy-infra
+  - deploy-services
+  - configure
+  - verify
+
+# ---------------------------------------------------------------------------
+# Reusable hidden job — clones upstream, installs tooling, renders config
+# ---------------------------------------------------------------------------
+.deploy_base:
+  image: python:3.12-alpine
+  tags:
+    - docker
+  retry: 1
+  before_script:
+    # ---- system packages ----
+    - apk add --no-cache bash curl git make openssl jq gettext
+
+    # ---- clone the upstream application repository ----
+    - git clone --depth 1 --branch "${EDC_REPO_REF}" "${EDC_REPO_URL}" /app/edc-mvds
+    - export WORK_DIR="/app/edc-mvds/${DEPLOY_SUBDIR}"
+
+    # ---- python tooling ----
+    - pip install --no-cache-dir ansible kubernetes python-keycloak requests
+    - ansible-galaxy collection install kubernetes.core
+
+    # ---- kubectl ----
+    - |
+      KUBECTL_VERSION="v1.31.4"
+      curl -Lo /usr/local/bin/kubectl \
+        "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+      chmod +x /usr/local/bin/kubectl
+
+    # ---- kubeconfig ----
+    - mkdir -p ~/.kube
+    - echo "${KUBECONFIG_B64}" | base64 -d > ~/.kube/config
+    - chmod 600 ~/.kube/config
+    - kubectl cluster-info
+
+    # ---- enter working directory ----
+    - cd "${WORK_DIR}"
+
+    # ---- render vars/shared_vars.yaml from CI variables ----
+    - |
+      cat > vars/shared_vars.yaml <<EOF
+      ---
+      application: edc-connector
+      k8s_namespace: "${K8S_NAMESPACE}"
+      kubeconfig_path: "~/.kube/config"
+
+      image_registry: "docker.io/psncedcmvds"
+      image_tag: "${IMAGE_TAG}"
+      image_pull_policy: "IfNotPresent"
+      image_pull_secret_name: "dockerhub-creds"
+
+      connector_image: "{{ image_registry }}/connector:{{ image_tag }}"
+      dashboard_image: "{{ image_registry }}/data-dashboard:{{ image_tag }}"
+      keycloak_image: "{{ image_registry }}/identity-provider:{{ image_tag }}"
+      identity_hub_image: "{{ image_registry }}/identity-hub:{{ image_tag }}"
+      consumer_backend_image: "{{ image_registry }}/consumer-backend:{{ image_tag }}"
+      vault_image: "hashicorp/vault:1.16"
+      storage_image: "rustfs/rustfs:1.0.0-alpha.87"
+      postgres_image: "docker.io/bitnami/postgresql:latest"
+
+      enable_identity_provider: ${ENABLE_IDENTITY_PROVIDER}
+      enable_identity_hub: ${ENABLE_IDENTITY_HUB}
+      enable_storage: ${ENABLE_STORAGE}
+
+      public_scheme: "https"
+      connector_host: "${CONNECTOR_HOST}"
+      dashboard_host: "${DASHBOARD_HOST}"
+      keycloak_host: "${KEYCLOAK_HOST:-keycloak.example.org}"
+      identity_hub_host: "${IDENTITY_HUB_HOST:-identity-hub.example.org}"
+      storage_host: "${STORAGE_HOST:-storage.example.org}"
+      consumer_backend_host: "${CONSUMER_BACKEND_HOST:-consumer-backend.example.org}"
+      keyvault_host: "${KEYVAULT_HOST:-vault.example.org}"
+      route_ip_whitelist: ""
+
+      issuer_did: "${ISSUER_DID}"
+      federated_catalog_address: "${FEDERATED_CATALOG_ADDR}"
+      data_space_hub_address: "${DATA_SPACE_HUB_ADDR}"
+      catalog_api_key: "${CATALOG_API_KEY:-}"
+      dsh_api_key: "${DSH_API_KEY:-}"
+
+      connector_id: "${CONNECTOR_ID}"
+      connector_auth_key: "${API_AUTH_KEY}"
+      sts_client_secret: "${STS_CLIENT_SECRET:-sts-client-secret}"
+      is_auth: true
+
+      ingress_class_name: ""
+      ingress_tls_enabled: false
+      ingress_tls_secret_name: ""
+      EOF
+
+    # ---- render vars/secrets.yaml ----
+    - |
+      cat > vars/secrets.yaml <<EOSEC
+      ---
+      secrets:
+        connector_db:
+          postgres_user: "connector"
+          postgres_password: "${CONNECTOR_DB_PASSWORD}"
+          postgres_db: "edc_connector_db"
+
+        connector:
+          datasource_default_url: "jdbc:postgresql://edc-connector-connector-db:5432/edc_connector_db"
+          datasource_default_user: "connector"
+          datasource_default_password: "${CONNECTOR_DB_PASSWORD}"
+          vault_hashicorp_token: "leave-for-template"
+          api_auth_key: "${API_AUTH_KEY}"
+          web_http_auth_key: "${API_AUTH_KEY}"
+          web_http_management_auth_key: "${API_AUTH_KEY}"
+          web_http_control_auth_key: "${API_AUTH_KEY}"
+          web_http_catalogproxy_auth_key: "${API_AUTH_KEY}"
+
+        keycloak_db:
+          postgres_user: "keycloak"
+          postgres_password: "${KEYCLOAK_DB_PASSWORD:-change-me}"
+          postgres_db: "keycloak"
+
+        keycloak:
+          admin: "admin"
+          admin_password: "${KEYCLOAK_ADMIN_PASSWORD:-change-me}"
+          db: "postgres"
+          db_schema: "public"
+          db_url: "edc-connector-keycloak-db"
+          db_username: "keycloak"
+          db_password: "${KEYCLOAK_DB_PASSWORD:-change-me}"
+
+        identity_hub_db:
+          postgres_user: "edc"
+          postgres_password: "${IDENTITY_HUB_DB_PASSWORD:-change-me}"
+          postgres_db: "edc"
+
+        identity_hub:
+          vault_hashicorp_token: "leave-for-template"
+          ih_api_superuser_key: "${IH_API_SUPERUSER_KEY:-change-me}"
+          datasource_default_user: "edc"
+          datasource_default_password: "${IDENTITY_HUB_DB_PASSWORD:-change-me}"
+
+        storage:
+          rustfs_access_key: "${RUSTFS_ACCESS_KEY:-change-me}"
+          rustfs_secret_key: "${RUSTFS_SECRET_KEY:-change-me}"
+
+        consumer_backend:
+          s3_access_key: "${RUSTFS_ACCESS_KEY:-change-me}"
+          s3_secret_key: "${RUSTFS_SECRET_KEY:-change-me}"
+      EOSEC
+
+# ---------------------------------------------------------------------------
+# Stage: prepare — namespace + Docker Hub image-pull secret
+# ---------------------------------------------------------------------------
+prepare:namespace:
+  extends: .deploy_base
+  stage: prepare
+  script:
+    - cd "${WORK_DIR}"
+    - |
+      if [ -n "${DOCKERHUB_USER:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+        kubectl -n "${K8S_NAMESPACE}" create secret docker-registry dockerhub-creds \
+          --docker-server=https://index.docker.io/v1/ \
+          --docker-username="${DOCKERHUB_USER}" \
+          --docker-password="${DOCKERHUB_TOKEN}" \
+          --docker-email="${DOCKERHUB_EMAIL:-ci@example.com}" \
+          --dry-run=client -o yaml | kubectl apply -f -
+      fi
+
+# ---------------------------------------------------------------------------
+# Stage: deploy-infra — env rendering, K8s secrets, databases, vault
+# ---------------------------------------------------------------------------
+deploy:env:
+  extends: .deploy_base
+  stage: deploy-infra
+  script:
+    - cd "${WORK_DIR}"
+    - ansible-playbook deploy-env.yaml
+  needs:
+    - prepare:namespace
+
+deploy:secrets:
+  extends: .deploy_base
+  stage: deploy-infra
+  script:
+    - cd "${WORK_DIR}"
+    - ansible-playbook deploy-secrets.yaml
+  needs:
+    - deploy:env
+
+deploy:databases:
+  extends: .deploy_base
+  stage: deploy-infra
+  script:
+    - cd "${WORK_DIR}"
+    - ansible-playbook deploy-databases.yaml
+  needs:
+    - deploy:secrets
+
+deploy:vault:
+  extends: .deploy_base
+  stage: deploy-infra
+  script:
+    - cd "${WORK_DIR}"
+    - ansible-playbook deploy-vault.yaml
+  needs:
+    - deploy:secrets
+
+# ---------------------------------------------------------------------------
+# Stage: deploy-services — workloads + ingress / routes
+# ---------------------------------------------------------------------------
+deploy:services:
+  extends: .deploy_base
+  stage: deploy-services
+  script:
+    - cd "${WORK_DIR}"
+    - ansible-playbook deploy-stateless-services.yaml
+  needs:
+    - deploy:databases
+    - deploy:vault
+
+deploy:gateways:
+  extends: .deploy_base
+  stage: deploy-services
+  script:
+    - cd "${CI_PROJECT_DIR}"
+    - export NAMESPACE="${K8S_NAMESPACE}"
+    - export KEYCLOAK_HOST="${KEYCLOAK_HOST:-keycloak.example.org}"
+    - export IDENTITY_HUB_HOST="${IDENTITY_HUB_HOST:-identity-hub.example.org}"
+    - export KEYVAULT_HOST="${KEYVAULT_HOST:-vault.example.org}"
+    - export STORAGE_HOST="${STORAGE_HOST:-storage.example.org}"
+    - export CONSUMER_BACKEND_HOST="${CONSUMER_BACKEND_HOST:-consumer-backend.example.org}"
+    - envsubst < gateway.yaml | kubectl apply -f -
+  needs:
+    - deploy:services
+
+# ---------------------------------------------------------------------------
+# Stage: configure — vault init/unseal, keycloak bootstrap, dataspace init
+# ---------------------------------------------------------------------------
+init:vault:
+  extends: .deploy_base
+  stage: configure
+  script:
+    - cd "${WORK_DIR}"
+    - make init-vault
+  needs:
+    - deploy:vault
+    - deploy:env
+
+configure:keycloak:
+  extends: .deploy_base
+  stage: configure
+  script:
+    - cd "${WORK_DIR}"
+    - make configure-keycloak
+  needs:
+    - deploy:services
+    - deploy:gateways
+  rules:
+    - if: '$ENABLE_IDENTITY_PROVIDER == "true"'
+
+init:dataspace:
+  extends: .deploy_base
+  stage: configure
+  script:
+    - cd "${WORK_DIR}"
+    - make init-dataspace
+  needs:
+    - init:vault
+    - job: configure:keycloak
+      optional: true
+    - deploy:gateways
+  rules:
+    - if: '$ENABLE_IDENTITY_HUB == "true"'
+
+# ---------------------------------------------------------------------------
+# Stage: verify — smoke tests and resource listing
+# ---------------------------------------------------------------------------
+verify:dataspace:
+  extends: .deploy_base
+  stage: verify
+  script:
+    - cd "${WORK_DIR}"
+    - make verify-dataspace VERIFY_VERBOSE=true
+  needs:
+    - init:dataspace
+  rules:
+    - if: '$ENABLE_IDENTITY_HUB == "true"'
+  allow_failure: true
+
+verify:resources:
+  extends: .deploy_base
+  stage: verify
+  script:
+    - cd "${WORK_DIR}"
+    - kubectl -n "${K8S_NAMESPACE}" get deploy,svc,ingress
+    - kubectl -n "${K8S_NAMESPACE}" get pods -o wide
+  needs:
+    - deploy:gateways
+  allow_failure: true
