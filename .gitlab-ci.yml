@@ -133,27 +133,17 @@ stages:
     # ---- enter working directory ----
     - cd "${WORK_DIR}"
 
-    # ---- render vars/shared_vars.yaml from CI variables ----
+    # ---- render overrides (only deployment-specific values) ----
+    # The upstream repo ships a full vars/shared_vars.yaml with sensible
+    # defaults.  We only override what differs for this deployment.
     - |
-      cat > vars/shared_vars.yaml <<EOF
+      cat > vars/overrides.yaml <<EOF
       ---
-      application: edc-connector
       k8s_namespace: "${K8S_NAMESPACE}"
       kubeconfig_path: "~/.kube/config"
 
-      image_registry: "docker.io/psncedcmvds"
       image_tag: "${IMAGE_TAG}"
-      image_pull_policy: "IfNotPresent"
       image_pull_secret_name: "dockerhub-creds"
-
-      connector_image: "{{ image_registry }}/connector:{{ image_tag }}"
-      dashboard_image: "{{ image_registry }}/data-dashboard:{{ image_tag }}"
-      keycloak_image: "{{ image_registry }}/identity-provider:{{ image_tag }}"
-      identity_hub_image: "{{ image_registry }}/identity-hub:{{ image_tag }}"
-      consumer_backend_image: "{{ image_registry }}/consumer-backend:{{ image_tag }}"
-      vault_image: "hashicorp/vault:1.16"
-      storage_image: "rustfs/rustfs:1.0.0-alpha.87"
-      postgres_image: "docker.io/bitnami/postgresql:latest"
 
       enable_identity_provider: ${ENABLE_IDENTITY_PROVIDER}
       enable_identity_hub: ${ENABLE_IDENTITY_HUB}
@@ -167,38 +157,16 @@ stages:
       storage_host: "${STORAGE_HOST:-storage.example.org}"
       consumer_backend_host: "${CONSUMER_BACKEND_HOST:-consumer-backend.example.org}"
       keyvault_host: "${KEYVAULT_HOST:-vault.example.org}"
-      route_ip_whitelist: ""
+
+      connector_id: "${CONNECTOR_ID}"
+      connector_auth_key: "${API_AUTH_KEY}"
+      sts_client_secret: "${STS_CLIENT_SECRET:-sts-client-secret}"
 
       issuer_did: "${ISSUER_DID}"
       federated_catalog_address: "${FEDERATED_CATALOG_ADDR}"
       data_space_hub_address: "${DATA_SPACE_HUB_ADDR}"
       catalog_api_key: "${CATALOG_API_KEY:-}"
       dsh_api_key: "${DSH_API_KEY:-}"
-
-      connector_id: "${CONNECTOR_ID}"
-      participant_id: "did:web:{{ identity_hub_host }}:{{ connector_id }}"
-      connector_auth_key: "${API_AUTH_KEY}"
-      sts_client_secret: "${STS_CLIENT_SECRET:-sts-client-secret}"
-      is_auth: true
-
-      ingress_class_name: ""
-      ingress_tls_enabled: false
-      ingress_tls_secret_name: ""
-
-      connector_db_service: "{{ application }}-connector-db"
-      keycloak_db_service: "{{ application }}-keycloak-db"
-      identity_hub_db_service: "{{ application }}-identity-hub-db"
-      connector_db_storage_size: "5Gi"
-      keycloak_db_storage_size: "5Gi"
-      identity_hub_db_storage_size: "5Gi"
-      connector_db_name: "edc_connector_db"
-
-      vault_replicas: 1
-      vault_pvc_storage_size: "1Gi"
-      vault_storage_class_name: ""
-      vault_service_account_name: "default"
-      identity_hub_vault_instance: "{{ connector_id }}-ih"
-      vault_url: "http://{{ application }}-vault-{{ identity_hub_vault_instance }}:8200"
       EOF
 
     # ---- render vars/secrets.yaml ----
@@ -288,7 +256,7 @@ deploy:env:
   stage: deploy-infra
   script:
     - cd "${WORK_DIR}"
-    - ansible-playbook deploy-env.yaml
+    - ansible-playbook -e @vars/overrides.yaml deploy-env.yaml
   needs:
     - prepare:namespace
 
@@ -297,7 +265,7 @@ deploy:secrets:
   stage: deploy-infra
   script:
     - cd "${WORK_DIR}"
-    - ansible-playbook deploy-secrets.yaml
+    - ansible-playbook -e @vars/overrides.yaml deploy-secrets.yaml
   needs:
     - deploy:env
 
@@ -306,7 +274,7 @@ deploy:databases:
   stage: deploy-infra
   script:
     - cd "${WORK_DIR}"
-    - ansible-playbook deploy-databases.yaml
+    - ansible-playbook -e @vars/overrides.yaml deploy-databases.yaml
   needs:
     - deploy:secrets
 
@@ -315,7 +283,7 @@ deploy:vault:
   stage: deploy-infra
   script:
     - cd "${WORK_DIR}"
-    - ansible-playbook deploy-vault.yaml
+    - ansible-playbook -e @vars/overrides.yaml deploy-vault.yaml
   needs:
     - deploy:secrets
 
@@ -327,7 +295,7 @@ deploy:services:
   stage: deploy-services
   script:
     - cd "${WORK_DIR}"
-    - ansible-playbook deploy-stateless-services.yaml
+    - ansible-playbook -e @vars/overrides.yaml deploy-stateless-services.yaml
   needs:
     - deploy:databases
     - deploy:vault
@@ -355,6 +323,7 @@ init:vault:
   stage: configure
   script:
     - cd "${WORK_DIR}"
+    - make deploy-env ANSIBLE_ARGS="-e @vars/overrides.yaml"
     - make init-vault
   needs:
     - deploy:vault
@@ -365,6 +334,7 @@ configure:keycloak:
   stage: configure
   script:
     - cd "${WORK_DIR}"
+    - make deploy-env ANSIBLE_ARGS="-e @vars/overrides.yaml"
     - make configure-keycloak
   needs:
     - deploy:services
@@ -377,6 +347,7 @@ init:dataspace:
   stage: configure
   script:
     - cd "${WORK_DIR}"
+    - make deploy-env ANSIBLE_ARGS="-e @vars/overrides.yaml"
     - make init-dataspace
   needs:
     - init:vault
@@ -394,6 +365,7 @@ verify:dataspace:
   stage: verify
   script:
     - cd "${WORK_DIR}"
+    - make deploy-env ANSIBLE_ARGS="-e @vars/overrides.yaml"
     - make verify-dataspace VERIFY_VERBOSE=true
   needs:
     - init:dataspace
