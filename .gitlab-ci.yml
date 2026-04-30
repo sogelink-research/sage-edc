@@ -386,6 +386,8 @@ init:vault:
   script:
     - cd "${WORK_DIR}"
     - make deploy-env ANSIBLE_ARGS="-e @vars/overrides.yaml"
+    - echo "Waiting for Vault pod to be ready..."
+    - kubectl -n "${K8S_NAMESPACE}" rollout status statefulset/edc-connector-vault-${CONNECTOR_ID}-ih --timeout=300s
     - make init-vault
   needs:
     - deploy:vault
@@ -397,6 +399,8 @@ configure:keycloak:
   script:
     - cd "${WORK_DIR}"
     - make deploy-env ANSIBLE_ARGS="-e @vars/overrides.yaml"
+    - echo "Waiting for Keycloak deployment to be ready..."
+    - kubectl -n "${K8S_NAMESPACE}" rollout status deployment/edc-connector-keycloak --timeout=300s
     - make configure-keycloak
   needs:
     - deploy:services
