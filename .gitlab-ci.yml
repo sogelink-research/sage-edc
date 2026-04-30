@@ -108,6 +108,7 @@ stages:
 
     # ---- clone the upstream application repository ----
     - git clone --depth 1 --branch "${EDC_REPO_REF}" "${EDC_REPO_URL}" /app/edc-mvds
+    - find /app/edc-mvds -maxdepth 4 -type d | sort
 
     # ---- python tooling ----
     - pip install --no-cache-dir ansible kubernetes python-keycloak requests
