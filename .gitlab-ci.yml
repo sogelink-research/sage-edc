@@ -7,7 +7,7 @@
 #
 # Prerequisites — set as CI/CD Variables (Settings → CI/CD → Variables):
 #
-#   KUBECONFIG_B64              base64-encoded kubeconfig for your GKE/Rancher cluster
+#   CONFIG                      base64-encoded kubeconfig for your GKE/Rancher cluster
 #   K8S_NAMESPACE               target namespace (e.g. edc-connector)
 #   CONNECTOR_ID                unique connector instance identifier
 #
@@ -124,7 +124,7 @@ stages:
 
     # ---- kubeconfig ----
     - mkdir -p ~/.kube
-    - echo "${KUBECONFIG_B64}" | base64 -d > ~/.kube/config
+    - echo "${CONFIG}" | base64 -d > ~/.kube/config
     - chmod 600 ~/.kube/config
     - kubectl cluster-info
 
