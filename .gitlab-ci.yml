@@ -148,6 +148,7 @@ stages:
       enable_identity_provider: ${ENABLE_IDENTITY_PROVIDER}
       enable_identity_hub: ${ENABLE_IDENTITY_HUB}
       enable_storage: ${ENABLE_STORAGE}
+      enable_vault: true
 
       public_scheme: "https"
       connector_host: "${CONNECTOR_HOST}"
