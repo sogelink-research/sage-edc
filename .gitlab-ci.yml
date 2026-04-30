@@ -100,8 +100,6 @@ stages:
 # ---------------------------------------------------------------------------
 .deploy_base:
   image: python:3.12-alpine
-  tags:
-    - docker
   retry: 1
   before_script:
     # ---- system packages ----
