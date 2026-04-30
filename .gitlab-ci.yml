@@ -98,6 +98,7 @@ stages:
   - deploy-services
   - configure
   - verify
+  - cleanup
 
 # ---------------------------------------------------------------------------
 # Reusable hidden job — clones upstream, installs tooling, renders config
@@ -168,9 +169,32 @@ stages:
       data_space_hub_address: "${DATA_SPACE_HUB_ADDR}"
       catalog_api_key: "${CATALOG_API_KEY:-}"
       dsh_api_key: "${DSH_API_KEY:-}"
+
+      # ---- resource limits (required by cluster ResourceQuota) ----
+      vault_resources:
+        requests: { cpu: "100m", memory: "256Mi" }
+        limits:   { cpu: "500m", memory: "512Mi" }
+      postgres_resources:
+        requests: { cpu: "100m", memory: "256Mi" }
+        limits:   { cpu: "500m", memory: "512Mi" }
       EOF
 
     # ---- render vars/secrets.yaml ----
+    # ---- patch upstream DB templates: inject resource limits ----
+    # The cluster enforces a ResourceQuota requiring limits.memory on every
+    # container.  The upstream postgres templates omit resources, so we
+    # inject them right before the volumeMounts line.
+    - |
+      RESOURCES_BLOCK='          resources:\n{{ postgres_resources | to_nice_yaml(indent=2) | indent(12, true) }}'
+      for tpl in templates/connector/connector-postgres.yaml.j2 \
+                 templates/keycloak/keycloak-postgres.yaml.j2 \
+                 templates/identity-hub/identity-hub-postgres.yaml.j2; do
+        if [ -f "$tpl" ] && ! grep -q 'postgres_resources' "$tpl"; then
+          sed -i "/^          volumeMounts:/i\\$RESOURCES_BLOCK" "$tpl"
+          echo "Patched $tpl with resource limits"
+        fi
+      done
+
     - |
       cat > vars/secrets.yaml <<EOSEC
       ---
@@ -383,4 +407,52 @@ verify:resources:
     - kubectl -n "${K8S_NAMESPACE}" get pods -o wide
   needs:
     - deploy:gateways
+  allow_failure: true
+
+# ---------------------------------------------------------------------------
+# Stage: cleanup — manual teardown of all EDC resources
+# ---------------------------------------------------------------------------
+cleanup:edc:
+  image: dtzar/helm-kubectl:3.11.3
+  stage: cleanup
+  before_script:
+    - mkdir -p ~/.kube
+    - '[ -f "$CONFIG" ] || { echo "ERROR: CONFIG file not found"; exit 1; }'
+    - cp $CONFIG ~/.kube/config
+    - chmod 600 ~/.kube/config
+  script:
+    - NS="${K8S_NAMESPACE}"
+    - APP="edc-connector"
+    - echo "=== Removing all EDC resources from namespace ${NS} ==="
+    # Gateways (Geodan CRD)
+    - kubectl -n "${NS}" delete gateway -l app="${APP}" --ignore-not-found
+    - kubectl -n "${NS}" delete gateway
+        "${CONNECTOR_ID}-connector"
+        "${CONNECTOR_ID}-dashboard"
+        "${CONNECTOR_ID}-keycloak"
+        "${CONNECTOR_ID}-identity-hub"
+        "${CONNECTOR_ID}-vault"
+        "${CONNECTOR_ID}-storage"
+        "${CONNECTOR_ID}-consumer-backend"
+        --ignore-not-found
+    # Deployments
+    - kubectl -n "${NS}" delete deploy -l app="${APP}" --ignore-not-found
+    # StatefulSets (databases + vault)
+    - kubectl -n "${NS}" delete statefulset -l app="${APP}" --ignore-not-found
+    # Services
+    - kubectl -n "${NS}" delete svc -l app="${APP}" --ignore-not-found
+    # ConfigMaps
+    - kubectl -n "${NS}" delete configmap -l app="${APP}" --ignore-not-found
+    # Secrets (app-managed only)
+    - kubectl -n "${NS}" delete secret -l app="${APP}" --ignore-not-found
+    - kubectl -n "${NS}" delete secret dockerhub-creds --ignore-not-found
+    # PVCs (database + vault data)
+    - kubectl -n "${NS}" delete pvc -l app="${APP}" --ignore-not-found
+    # ServiceAccounts
+    - kubectl -n "${NS}" delete sa -l app="${APP}" --ignore-not-found
+    # Summary
+    - echo "=== Remaining resources in ${NS} ==="
+    - kubectl -n "${NS}" get all,pvc,configmap,secret,gateway 2>/dev/null || true
+  rules:
+    - when: manual
   allow_failure: true
