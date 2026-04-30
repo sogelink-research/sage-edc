@@ -124,7 +124,7 @@ stages:
     - mkdir -p ~/.kube
     - echo "${CONFIG}" | base64 -d > ~/.kube/config
     - chmod 600 ~/.kube/config
-    - kubectl cluster-info
+    - kubectl version
 
     # ---- enter working directory ----
     - cd "${WORK_DIR}"
@@ -237,13 +237,16 @@ stages:
       EOSEC
 
 # ---------------------------------------------------------------------------
-# Stage: prepare — namespace + Docker Hub image-pull secret
+# Stage: prepare — Docker Hub image-pull secret (optional)
 # ---------------------------------------------------------------------------
 prepare:namespace:
-  extends: .deploy_base
+  image: dtzar/helm-kubectl:3.11.3
   stage: prepare
+  before_script:
+    - mkdir -p ~/.kube
+    - echo "${CONFIG}" | base64 -d > ~/.kube/config
+    - chmod 600 ~/.kube/config
   script:
-    - cd "${WORK_DIR}"
     - |
       if [ -n "${DOCKERHUB_USER:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
         kubectl -n "${K8S_NAMESPACE}" create secret docker-registry dockerhub-creds \
@@ -252,6 +255,8 @@ prepare:namespace:
           --docker-password="${DOCKERHUB_TOKEN}" \
           --docker-email="${DOCKERHUB_EMAIL:-ci@example.com}" \
           --dry-run=client -o yaml | kubectl apply -f -
+      else
+        echo "No DOCKERHUB_USER/TOKEN set, skipping image pull secret."
       fi
 
 # ---------------------------------------------------------------------------
