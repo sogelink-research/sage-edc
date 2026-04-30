@@ -121,7 +121,8 @@ stages:
 
     # ---- kubeconfig ----
     - mkdir -p ~/.kube
-    - echo "${CONFIG}" | base64 -d > ~/.kube/config
+    - '[ -n "$CONFIG" ] || { echo "ERROR: CONFIG variable is not set"; exit 1; }'
+    - echo $CONFIG | base64 -d > ~/.kube/config
     - chmod 600 ~/.kube/config
     - kubectl version
 
@@ -259,9 +260,9 @@ prepare:namespace:
   stage: prepare
   before_script:
     - mkdir -p ~/.kube
-    - echo "${CONFIG}" | base64 -d > ~/.kube/config
+    - '[ -n "$CONFIG" ] || { echo "ERROR: CONFIG variable is not set"; exit 1; }'
+    - echo $CONFIG | base64 -d > ~/.kube/config
     - chmod 600 ~/.kube/config
-  script:
     - |
       if [ -n "${DOCKERHUB_USER:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
         kubectl -n "${K8S_NAMESPACE}" create secret docker-registry dockerhub-creds \
