@@ -7,7 +7,7 @@
 #
 # Prerequisites — set as CI/CD Variables (Settings → CI/CD → Variables):
 #
-#   KUBECONFIG                   File-type kubeconfig variable (set at group level; aliased to CONFIG below)
+#   KUBECONFIG_RESEARCH         File-type kubeconfig variable (set at group level; aliased to CONFIG below)
 #   K8S_NAMESPACE               target namespace (e.g. edc-connector)
 #   CONNECTOR_ID                unique connector instance identifier
 #
@@ -50,7 +50,7 @@
 variables:
   # KUBECONFIG is a File-type CI variable — GitLab writes it to a temp path;
   # using the name KUBECONFIG directly does not work reliably, so alias it to CONFIG.
-  CONFIG: $KUBECONFIG
+  CONFIG: $KUBECONFIG_RESEARCH
 
   IMAGE_TAG: "latest"
   ENABLE_IDENTITY_PROVIDER: "true"
