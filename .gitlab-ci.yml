@@ -179,54 +179,45 @@ stages:
     # ---- patch upstream templates for strict cluster policies ----
     # Uses Python (already installed) instead of sed for reliable multi-line edits.
     # Cluster enforces: ResourceQuota (limits.memory) + PodSecurity (runAsNonRoot).
+    # NOTE: YAML | block strips 6 leading spaces, so Python string literals use
+    # an ind() helper to add correct indentation at runtime.
     - |
       python3 - <<'PYEOF'
-      import os, sys
+      import os
+
+      def ind(text, n):
+          """Add n spaces of indentation to every line."""
+          p = " " * n
+          return "\n".join(p + l for l in text.splitlines())
 
       def patch(path, marker, target, content):
-          """Insert content before target line if marker not already present."""
           if not os.path.isfile(path):
               return
-          with open(path) as f:
-              text = f.read()
+          text = open(path).read()
           if marker in text:
-              print(f"  SKIP {path} (already patched)")
+              print(f"  SKIP {path}")
               return
           if target not in text:
-              print(f"  WARN {path}: target line not found: {target!r}")
+              print(f"  WARN {path}: target not found: {target!r}")
               return
           text = text.replace(target, content + "\n" + target)
-          with open(path, "w") as f:
-              f.write(text)
+          open(path, "w").write(text)
           print(f"  OK   {path}")
 
       def replace(path, old, new):
-          """Simple string replacement."""
           if not os.path.isfile(path):
               return
-          with open(path) as f:
-              text = f.read()
+          text = open(path).read()
           if old not in text:
+              print(f"  WARN {path}: old text not found")
               return
-          text = text.replace(old, new)
-          with open(path, "w") as f:
-              f.write(text)
-          print(f"  OK   {path} (replaced)")
+          open(path, "w").write(text.replace(old, new))
+          print(f"  OK   {path}")
 
-      # --- Postgres templates: add pod securityContext + container resources ---
-      PG_SEC_CTX = """\
-      securityContext:
-        fsGroup: 1001
-        runAsUser: 1001"""
-
-      PG_RESOURCES = """\
-          resources:
-            requests:
-              cpu: "100m"
-              memory: "256Mi"
-            limits:
-              cpu: "500m"
-              memory: "512Mi" """
+      # --- Postgres: pod securityContext (6-space indent) ---
+      PG_SEC = ind("securityContext:\n  fsGroup: 1001\n  runAsUser: 1001", 6)
+      # --- Postgres: container resources (10-space indent) ---
+      PG_RES = ind("resources:\n  requests:\n    cpu: \"100m\"\n    memory: \"256Mi\"\n  limits:\n    cpu: \"500m\"\n    memory: \"512Mi\"", 10)
 
       print("== Patching Postgres templates ==")
       for tpl in [
@@ -234,38 +225,25 @@ stages:
           "templates/keycloak/keycloak-postgres.yaml.j2",
           "templates/identity-hub/identity-hub-postgres.yaml.j2",
       ]:
-          # pod-level securityContext
           patch(tpl, "fsGroup: 1001",
-                "{% if image_pull_secret_name", PG_SEC_CTX)
-          # container resource limits
+                "{% if image_pull_secret_name", PG_SEC)
           patch(tpl, 'cpu: "100m"',
-                "          volumeMounts:", PG_RESOURCES)
+                "          volumeMounts:", PG_RES)
 
-      # --- Vault template: pod securityContext (fsGroup) + container securityContext (runAsUser) ---
+      # --- Vault: pod securityContext (6-space indent) ---
       print("== Patching Vault template ==")
-      VAULT = "templates/vault/vault.yaml.j2"
+      V = "templates/vault/vault.yaml.j2"
+      V_POD_SEC = ind("securityContext:\n  fsGroup: 100\n  runAsUser: 100", 6)
+      patch(V, "fsGroup: 100", "      serviceAccountName:", V_POD_SEC)
+      # container securityContext: add runAsUser: 100
+      OLD_SEC = ind("securityContext:\n  readOnlyRootFilesystem: false\n  runAsNonRoot: true", 10)
+      NEW_SEC = OLD_SEC + "\n" + ind("runAsUser: 100", 12)
+      replace(V, OLD_SEC, NEW_SEC)
 
-      # pod-level: add fsGroup so /vault/data PVC is group-writable
-      patch(VAULT, "fsGroup: 100",
-            "      serviceAccountName:", """\
-      securityContext:
-        fsGroup: 100
-        runAsUser: 100""")
-
-      # container-level: add runAsUser to existing securityContext
-      replace(VAULT,
-              """          securityContext:
-            readOnlyRootFilesystem: false
-            runAsNonRoot: true""",
-              """          securityContext:
-            readOnlyRootFilesystem: false
-            runAsNonRoot: true
-            runAsUser: 100""")
-
-      # --- Storage template: fix typo podSecurityContext -> securityContext ---
+      # --- Storage: fix podSecurityContext typo ---
       print("== Patching Storage template ==")
       replace("templates/storage/storage-deployment.yaml.j2",
-              "      podSecurityContext:", "      securityContext:")
+              ind("podSecurityContext:", 6), ind("securityContext:", 6))
       PYEOF
 
     - |
