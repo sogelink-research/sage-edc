@@ -179,9 +179,17 @@ stages:
         readOnlyRootFilesystem: false
         runAsNonRoot: true
         runAsUser: 100
+      # pod-level fsGroup so the vault-data PVC is group-owned by gid 100
+      vault_pod_security_context:
+        fsGroup: 100
       postgres_resources:
         requests: { cpu: "100m", memory: "256Mi" }
         limits:   { cpu: "500m", memory: "512Mi" }
+      # Bitnami PostgreSQL image runs as uid 1001; fsGroup ensures the mounted
+      # PVC is writable by that user.
+      postgres_security_context:
+        fsGroup: 1001
+        runAsUser: 1001
       EOF
 
     # ---- render vars/secrets.yaml ----
@@ -191,12 +199,16 @@ stages:
     # inject them right before the volumeMounts line.
     - |
       RESOURCES_BLOCK='          resources:\n{{ postgres_resources | to_nice_yaml(indent=2) | indent(12, true) }}'
+      SEC_CTX_BLOCK='      securityContext:\n{{ postgres_security_context | to_nice_yaml(indent=2) | indent(6, true) }}'
       for tpl in templates/connector/connector-postgres.yaml.j2 \
                  templates/keycloak/keycloak-postgres.yaml.j2 \
                  templates/identity-hub/identity-hub-postgres.yaml.j2; do
         if [ -f "$tpl" ] && ! grep -q 'postgres_resources' "$tpl"; then
+          # inject container resource limits before volumeMounts
           sed -i "/^          volumeMounts:/i\\$RESOURCES_BLOCK" "$tpl"
-          echo "Patched $tpl with resource limits"
+          # inject pod-level securityContext (fsGroup+runAsUser) before containers/imagePullSecrets
+          sed -i "/^{% if image_pull_secret_name/i\\$SEC_CTX_BLOCK" "$tpl"
+          echo "Patched $tpl with resource limits and securityContext"
         fi
       done
       # Patch vault securityContext to add runAsUser: 100 (hashicorp/vault image uid)
@@ -204,10 +216,20 @@ stages:
       # CreateContainerConfigError when the cluster enforces runAsNonRoot.
       VAULT_TPL="templates/vault/vault.yaml.j2"
       if [ -f "$VAULT_TPL" ] && ! grep -q 'vault_security_context' "$VAULT_TPL"; then
+        # container-level: replace hardcoded securityContext with templated one (adds runAsUser)
         sed -i 's/          securityContext:/          securityContext:\n{{ vault_security_context | to_nice_yaml(indent=2) | indent(12, true) }}/' "$VAULT_TPL"
         sed -i '/^            readOnlyRootFilesystem:/d' "$VAULT_TPL"
         sed -i '/^            runAsNonRoot:/d' "$VAULT_TPL"
-        echo "Patched $VAULT_TPL with vault_security_context"
+        # pod-level: inject fsGroup before serviceAccountName so PVC is group-writable
+        sed -i "/^      serviceAccountName:/i\\      securityContext:\n{{ vault_pod_security_context | to_nice_yaml(indent=2) | indent(6, true) }}" "$VAULT_TPL"
+        echo "Patched $VAULT_TPL with vault_security_context and vault_pod_security_context"
+      fi
+      # Fix storage template: upstream uses 'podSecurityContext' (invalid K8s field) instead
+      # of 'securityContext', so fsGroup is silently ignored and the PVC becomes unwritable.
+      STORAGE_TPL="templates/storage/storage-deployment.yaml.j2"
+      if [ -f "$STORAGE_TPL" ] && grep -q 'podSecurityContext' "$STORAGE_TPL"; then
+        sed -i 's/      podSecurityContext:/      securityContext:/' "$STORAGE_TPL"
+        echo "Patched $STORAGE_TPL: podSecurityContext -> securityContext"
       fi
 
     - |
