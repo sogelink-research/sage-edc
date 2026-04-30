@@ -7,7 +7,7 @@
 #
 # Prerequisites — set as CI/CD Variables (Settings → CI/CD → Variables):
 #
-#   CONFIG                      base64-encoded kubeconfig for your GKE/Rancher cluster
+#   CONFIG                      kubeconfig file CI/CD variable (type: File) for your GKE/Rancher cluster
 #   K8S_NAMESPACE               target namespace (e.g. edc-connector)
 #   CONNECTOR_ID                unique connector instance identifier
 #
@@ -121,7 +121,7 @@ stages:
 
     # ---- kubeconfig ----
     - mkdir -p ~/.kube
-    - echo "${CONFIG}" | base64 -d > ~/.kube/config
+    - cp "${CONFIG}" ~/.kube/config
     - chmod 600 ~/.kube/config
     - kubectl version
 
@@ -259,7 +259,7 @@ prepare:namespace:
   stage: prepare
   before_script:
     - mkdir -p ~/.kube
-    - echo "${CONFIG}" | base64 -d > ~/.kube/config
+    - cp "${CONFIG}" ~/.kube/config
     - chmod 600 ~/.kube/config
   script:
     - |
