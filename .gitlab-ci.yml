@@ -174,6 +174,11 @@ stages:
       vault_resources:
         requests: { cpu: "100m", memory: "256Mi" }
         limits:   { cpu: "500m", memory: "512Mi" }
+      # runAsUser: 100 is the vault user built into hashicorp/vault image
+      vault_security_context:
+        readOnlyRootFilesystem: false
+        runAsNonRoot: true
+        runAsUser: 100
       postgres_resources:
         requests: { cpu: "100m", memory: "256Mi" }
         limits:   { cpu: "500m", memory: "512Mi" }
@@ -194,6 +199,16 @@ stages:
           echo "Patched $tpl with resource limits"
         fi
       done
+      # Patch vault securityContext to add runAsUser: 100 (hashicorp/vault image uid)
+      # The upstream template sets runAsNonRoot: true but omits runAsUser, causing
+      # CreateContainerConfigError when the cluster enforces runAsNonRoot.
+      VAULT_TPL="templates/vault/vault.yaml.j2"
+      if [ -f "$VAULT_TPL" ] && ! grep -q 'vault_security_context' "$VAULT_TPL"; then
+        sed -i 's/          securityContext:/          securityContext:\n{{ vault_security_context | to_nice_yaml(indent=2) | indent(12, true) }}/' "$VAULT_TPL"
+        sed -i '/^            readOnlyRootFilesystem:/d' "$VAULT_TPL"
+        sed -i '/^            runAsNonRoot:/d' "$VAULT_TPL"
+        echo "Patched $VAULT_TPL with vault_security_context"
+      fi
 
     - |
       cat > vars/secrets.yaml <<EOSEC
