@@ -57,8 +57,7 @@ variables:
   EDC_REPO_URL: "https://gitlab.pcss.pl/daisd-public/dpi-pipelines/psnc-edc-mvds/psnc-edc-mvds.git"
   EDC_REPO_REF: "develop"
   # Path inside the cloned repo where the K8s instructions live
-  DEPLOY_SUBDIR: deployment/instruction/kubernetes
-  WORK_DIR: /app/edc-mvds/${DEPLOY_SUBDIR}
+  WORK_DIR: /app/edc-mvds/deployment/instruction/kubernetes
 
   # ---- deployment target ----
   K8S_NAMESPACE: "research-services"
@@ -172,6 +171,7 @@ stages:
       dsh_api_key: "${DSH_API_KEY:-}"
 
       connector_id: "${CONNECTOR_ID}"
+      participant_id: "did:web:{{ identity_hub_host }}:{{ connector_id }}"
       connector_auth_key: "${API_AUTH_KEY}"
       sts_client_secret: "${STS_CLIENT_SECRET:-sts-client-secret}"
       is_auth: true
@@ -179,6 +179,21 @@ stages:
       ingress_class_name: ""
       ingress_tls_enabled: false
       ingress_tls_secret_name: ""
+
+      connector_db_service: "{{ application }}-connector-db"
+      keycloak_db_service: "{{ application }}-keycloak-db"
+      identity_hub_db_service: "{{ application }}-identity-hub-db"
+      connector_db_storage_size: "5Gi"
+      keycloak_db_storage_size: "5Gi"
+      identity_hub_db_storage_size: "5Gi"
+      connector_db_name: "edc_connector_db"
+
+      vault_replicas: 1
+      vault_pvc_storage_size: "1Gi"
+      vault_storage_class_name: ""
+      vault_service_account_name: "default"
+      identity_hub_vault_instance: "{{ connector_id }}-ih"
+      vault_url: "http://{{ application }}-vault-{{ identity_hub_vault_instance }}:8200"
       EOF
 
     # ---- render vars/secrets.yaml ----
