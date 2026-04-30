@@ -121,7 +121,7 @@ stages:
 
     # ---- kubeconfig ----
     - mkdir -p ~/.kube
-    - cp "${CONFIG}" ~/.kube/config
+    - cp "$CONFIG" ~/.kube/config
     - chmod 600 ~/.kube/config
     - kubectl version
 
@@ -259,7 +259,7 @@ prepare:namespace:
   stage: prepare
   before_script:
     - mkdir -p ~/.kube
-    - cp "${CONFIG}" ~/.kube/config
+    - cp "$CONFIG" ~/.kube/config
     - chmod 600 ~/.kube/config
   script:
     - |
