@@ -58,6 +58,7 @@ variables:
   EDC_REPO_REF: "master"
   # Path inside the cloned repo where the K8s instructions live
   DEPLOY_SUBDIR: deployment/instruction/kubernetes
+  WORK_DIR: /app/edc-mvds/${DEPLOY_SUBDIR}
 
   # ---- deployment target ----
   K8S_NAMESPACE: "research-services"
@@ -107,7 +108,6 @@ stages:
 
     # ---- clone the upstream application repository ----
     - git clone --depth 1 --branch "${EDC_REPO_REF}" "${EDC_REPO_URL}" /app/edc-mvds
-    - export WORK_DIR="/app/edc-mvds/${DEPLOY_SUBDIR}"
 
     # ---- python tooling ----
     - pip install --no-cache-dir ansible kubernetes python-keycloak requests
@@ -115,7 +115,7 @@ stages:
 
     # ---- kubectl ----
     - |
-      KUBECTL_VERSION="v1.31.4"
+      KUBECTL_VERSION="v1.34.0"
       curl -Lo /usr/local/bin/kubectl \
         "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
       chmod +x /usr/local/bin/kubectl
