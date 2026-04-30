@@ -7,7 +7,7 @@
 #
 # Prerequisites — set as CI/CD Variables (Settings → CI/CD → Variables):
 #
-#   CONFIG                      base64-encoded kubeconfig (inherited from group CI/CD variables)
+#   KUBECONFIG                   File-type kubeconfig variable (set at group level; aliased to CONFIG below)
 #   K8S_NAMESPACE               target namespace (e.g. edc-connector)
 #   CONNECTOR_ID                unique connector instance identifier
 #
@@ -48,6 +48,10 @@
 ###############################################################################
 
 variables:
+  # KUBECONFIG is a File-type CI variable — GitLab writes it to a temp path;
+  # using the name KUBECONFIG directly does not work reliably, so alias it to CONFIG.
+  CONFIG: $KUBECONFIG
+
   IMAGE_TAG: "latest"
   ENABLE_IDENTITY_PROVIDER: "true"
   ENABLE_IDENTITY_HUB: "false"
@@ -121,8 +125,8 @@ stages:
 
     # ---- kubeconfig ----
     - mkdir -p ~/.kube
-    - '[ -n "$CONFIG" ] || { echo "ERROR: CONFIG variable is not set"; exit 1; }'
-    - echo $CONFIG | base64 -d > ~/.kube/config
+    - '[ -f "$CONFIG" ] || { echo "ERROR: CONFIG file not found (is KUBECONFIG set as a File variable at group level?)"; exit 1; }'
+    - cp $CONFIG ~/.kube/config
     - chmod 600 ~/.kube/config
     - kubectl version
 
@@ -260,8 +264,8 @@ prepare:namespace:
   stage: prepare
   before_script:
     - mkdir -p ~/.kube
-    - '[ -n "$CONFIG" ] || { echo "ERROR: CONFIG variable is not set"; exit 1; }'
-    - echo $CONFIG | base64 -d > ~/.kube/config
+    - '[ -f "$CONFIG" ] || { echo "ERROR: CONFIG file not found (is KUBECONFIG set as a File variable at group level?)"; exit 1; }'
+    - cp $CONFIG ~/.kube/config
     - chmod 600 ~/.kube/config
   script:
     - |
