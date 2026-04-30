@@ -54,7 +54,7 @@ variables:
   ENABLE_STORAGE: "true"
   ANSIBLE_FORCE_COLOR: "true"
   # Upstream repo containing the deployment playbooks
-  EDC_REPO_URL: "https://github.com/psnc-edc/psnc-edc-mvds.git"
+  EDC_REPO_URL: "https://gitlab.pcss.pl/daisd-public/dpi-pipelines/psnc-edc-mvds/psnc-edc-mvds.git"
   EDC_REPO_REF: "master"
   # Path inside the cloned repo where the K8s instructions live
   DEPLOY_SUBDIR: deployment/instruction/kubernetes
