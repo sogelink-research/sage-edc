@@ -55,7 +55,7 @@ variables:
   ANSIBLE_FORCE_COLOR: "true"
   # Upstream repo containing the deployment playbooks
   EDC_REPO_URL: "https://gitlab.pcss.pl/daisd-public/dpi-pipelines/psnc-edc-mvds/psnc-edc-mvds.git"
-  EDC_REPO_REF: "master"
+  EDC_REPO_REF: "develop"
   # Path inside the cloned repo where the K8s instructions live
   DEPLOY_SUBDIR: deployment/instruction/kubernetes
   WORK_DIR: /app/edc-mvds/${DEPLOY_SUBDIR}
@@ -108,7 +108,6 @@ stages:
 
     # ---- clone the upstream application repository ----
     - git clone --depth 1 --branch "${EDC_REPO_REF}" "${EDC_REPO_URL}" /app/edc-mvds
-    - find /app/edc-mvds -maxdepth 4 -type d | sort
 
     # ---- python tooling ----
     - pip install --no-cache-dir ansible kubernetes python-keycloak requests
