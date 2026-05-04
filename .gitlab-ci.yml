@@ -7,32 +7,19 @@
 #
 # Prerequisites — set as CI/CD Variables (Settings → CI/CD → Variables):
 #
-#   KUBECONFIG_RESEARCH         File-type kubeconfig variable (set at group level; aliased to CONFIG below)
+#   KUBECONFIG_FILE             File-type kubeconfig variable (must be set as File type)
 #   K8S_NAMESPACE               target namespace (e.g. edc-connector)
 #   CONNECTOR_ID                unique connector instance identifier
+#   DOMAIN_BASE                 base domain for public hostnames (e.g. example.org)
 #
-#   CONNECTOR_HOST              public host for connector
-#   DASHBOARD_HOST              public host for dashboard
-#   KEYCLOAK_HOST               public host for keycloak         (if enabled)
-#   IDENTITY_HUB_HOST           public host for identity hub     (if enabled)
-#   STORAGE_HOST                public host for storage          (if enabled)
-#   CONSUMER_BACKEND_HOST       public host for consumer backend (if enabled)
-#   KEYVAULT_HOST               public host for vault            (if enabled)
-#
-#   ISSUER_DID                  dataspace issuer DID
-#   FEDERATED_CATALOG_ADDR      federated catalog URL
-#   DATA_SPACE_HUB_ADDR         data-space-hub URL
+#   ISSUER_DID                  dataspace issuer DID  (e.g. did:web:your-dataspace-issuer)
+#   FEDERATED_CATALOG_ADDR      federated catalog URL (e.g. https://federated-catalog.your-dataspace.org)
+#   DATA_SPACE_HUB_ADDR         data-space-hub URL    (e.g. https://data-space-hub.your-dataspace.org)
 #   CATALOG_API_KEY             catalog API key (can be empty)
 #   DSH_API_KEY                 data-space-hub API key (can be empty)
 #
-#   DOCKERHUB_USER              Docker Hub username  (for image pull secret)
-#   DOCKERHUB_TOKEN             Docker Hub access token
-#   DOCKERHUB_EMAIL             Docker Hub email
-#
-#   IMAGE_TAG                   image tag to deploy (default: latest)
-#
 #   ENABLE_IDENTITY_PROVIDER    true/false (default: true)
-#   ENABLE_IDENTITY_HUB         true/false (default: true)
+#   ENABLE_IDENTITY_HUB         true/false (default: false)
 #   ENABLE_STORAGE              true/false (default: true)
 #
 # Secrets — generate with: openssl rand -base64 32 | tr -d '\n'
@@ -41,22 +28,30 @@
 #   KEYCLOAK_ADMIN_PASSWORD
 #   IDENTITY_HUB_DB_PASSWORD
 #   API_AUTH_KEY
-#   IH_API_SUPERUSER_KEY        format: base64(user).base64(secret) — see generation command below
 #   RUSTFS_ACCESS_KEY
 #   RUSTFS_SECRET_KEY
-#   STS_CLIENT_SECRET
+#   STS_CLIENT_SECRET (optional, can be empty if not using Vault)
+#   IH_API_SUPERUSER_KEY        format: base64(user).base64(secret) — Generate with: IH_USER="super-user"; IH_SECRET="$(openssl rand -base64 32 | tr -d '\r\n')"; printf '%s.%s\n' "$(printf '%s' "$IH_USER" | openssl base64 -A)" "$(printf '%s' "$IH_SECRET" | openssl base64 -A)"
+#
+#   Optional Docker Hub credentials for pulling images (if not public):
+#   DOCKERHUB_USER              Docker Hub username  (for image pull secret)
+#   DOCKERHUB_TOKEN             Docker Hub access token
+#   DOCKERHUB_EMAIL             Docker Hub email
+
+
 ###############################################################################
 
 variables:
-  # KUBECONFIG is a File-type CI variable — GitLab writes it to a temp path;
-  # using the name KUBECONFIG directly does not work reliably, so alias it to CONFIG.
-  CONFIG: $KUBECONFIG_RESEARCH
+  # KUBECONFIG_FILE is a File-type CI variable — GitLab writes the content to a temp
+  # file and sets the variable to its path. Do not name it KUBECONFIG as that name
+  # is reserved in some environments. Aliased to CONFIG for internal use.
+  CONFIG: $KUBECONFIG_FILE
 
   IMAGE_TAG: "latest"
-  ENABLE_IDENTITY_PROVIDER: "true"
-  ENABLE_IDENTITY_HUB: "false"
-  ENABLE_STORAGE: "true"
-  ANSIBLE_FORCE_COLOR: "true"
+  ENABLE_IDENTITY_PROVIDER: "true"  # Keycloak-based identity provider for EDC (required by dashboard)
+  ENABLE_IDENTITY_HUB: "false"      # Identity Hub component for data space integration (optional)
+  ENABLE_STORAGE: "true"            # RustFS-based storage service for EDC (optional, but recommended for real workloads)
+  ANSIBLE_FORCE_COLOR: "true"       # Force color output in Ansible logs for better readability
   # Upstream repo containing the deployment playbooks
   EDC_REPO_URL: "https://gitlab.pcss.pl/daisd-public/dpi-pipelines/psnc-edc-mvds/psnc-edc-mvds.git"
   EDC_REPO_REF: "develop"
@@ -64,33 +59,18 @@ variables:
   WORK_DIR: /app/edc-mvds/deployment/instruction/kubernetes
 
   # ---- deployment target ----
-  K8S_NAMESPACE: "research-services"
-  CONNECTOR_ID: "sogelink"
+  # K8S_NAMESPACE: "edc-connector"         # set as CI/CD variable
+  # CONNECTOR_ID: "my-org"                 # set as CI/CD variable
+  # DOMAIN_BASE: "example.org"             # set as CI/CD variable
 
   # ---- public hostnames ----
-  CONNECTOR_HOST: "sogelink.edc.beta.geodan.nl"
-  DASHBOARD_HOST: "sogelink.edc-dashboard.beta.geodan.nl"
-  KEYCLOAK_HOST: "sogelink.edc-keycloak.beta.geodan.nl"
-  IDENTITY_HUB_HOST: "sogelink.edc-identity.beta.geodan.nl"
-  STORAGE_HOST: "sogelink.edc-storage.beta.geodan.nl"
-  CONSUMER_BACKEND_HOST: "sogelink.edc-consumer.beta.geodan.nl"
-  KEYVAULT_HOST: "sogelink.edc-vault.beta.geodan.nl"
-
-  # ---- dataspace-provided (REQUIRED — get from your dataspace authority) ----
-  # ISSUER_DID: ""                  # e.g. did:web:your-dataspace-issuer
-  # FEDERATED_CATALOG_ADDR: ""      # e.g. https://federated-catalog.your-dataspace.org
-  # DATA_SPACE_HUB_ADDR: ""         # e.g. https://data-space-hub.your-dataspace.org
-
-  # ---- secrets (move to masked CI/CD variables before production!) ----
-  CONNECTOR_DB_PASSWORD: "WUUpKKF7kb7vbEe88C6TwxcACGAtOu0Zj/cnjNrwppI="
-  KEYCLOAK_DB_PASSWORD: "SG4+Jd0RiUsCLOcZ6QqnvN/lxQgkStCXyTBQrU6CGV8="
-  KEYCLOAK_ADMIN_PASSWORD: "p29Lj7sPQjdXSpI0H1/cM5addDWzpNrFgqcv/jgtfNw="
-  IDENTITY_HUB_DB_PASSWORD: "oNMWUsoTFWFNOnlIjaRDbdEzoAfxN9Y3/5EQtjsuy34="
-  API_AUTH_KEY: "B9NiU5D2RYf+tPhJIeweVzg3UHGGJmPhYlghSWyrMMQ="
-  # Generate with: IH_USER="super-user"; IH_SECRET="$(openssl rand -base64 32 | tr -d '\r\n')"; printf '%s.%s\n' "$(printf '%s' "$IH_USER" | openssl base64 -A)" "$(printf '%s' "$IH_SECRET" | openssl base64 -A)"
-  IH_API_SUPERUSER_KEY: "c3VwZXItdXNlcg==.WUwzMFhIMUZkRjFkdmx3NGs4a0ZsUEhpZVlSOFlTL3NCd3pnSU1XM3VZUT0="
-  RUSTFS_ACCESS_KEY: "j3nv+cwioReCZRD05Qqlt4ukfu6Z/3ZP2SdTl2+xWSA="
-  RUSTFS_SECRET_KEY: "IEkMi4o0RGykXFk/HIIzZN0UDokOKMBAmxY19z07Bno="
+  CONNECTOR_HOST: "${CONNECTOR_ID}.edc.${DOMAIN_BASE}"
+  DASHBOARD_HOST: "${CONNECTOR_ID}.edc-dashboard.${DOMAIN_BASE}"
+  KEYCLOAK_HOST: "${CONNECTOR_ID}.edc-keycloak.${DOMAIN_BASE}"
+  IDENTITY_HUB_HOST: "${CONNECTOR_ID}.edc-identity.${DOMAIN_BASE}"
+  STORAGE_HOST: "${CONNECTOR_ID}.edc-storage.${DOMAIN_BASE}"
+  CONSUMER_BACKEND_HOST: "${CONNECTOR_ID}.edc-consumer.${DOMAIN_BASE}"
+  KEYVAULT_HOST: "${CONNECTOR_ID}.edc-vault.${DOMAIN_BASE}"
 
 stages:
   - prepare
@@ -144,7 +124,7 @@ stages:
       kubeconfig_path: "~/.kube/config"
 
       image_tag: "${IMAGE_TAG}"
-      image_pull_secret_name: "dockerhub-creds"
+      image_pull_secret_name: "${DOCKERHUB_USER:+dockerhub-creds}"
 
       enable_identity_provider: ${ENABLE_IDENTITY_PROVIDER}
       enable_identity_hub: ${ENABLE_IDENTITY_HUB}

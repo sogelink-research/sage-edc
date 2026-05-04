@@ -1,0 +1,2 @@
+# gateway.yaml is cluster-specific — each deployer creates their own from gateway.yaml.example
+gateway.yaml

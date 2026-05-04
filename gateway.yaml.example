@@ -1,0 +1,259 @@
+###############################################################################
+# PSNC EDC MVDS — Ingress / Gateway routes (EXAMPLE)
+#
+# This is an EXAMPLE file using the Geodan-internal geodan.nl/v1 Gateway CRD.
+# The spec format (routes, auth, keepContext) is specific to this CRD and will
+# not work on other clusters.
+#
+# To use this pipeline on your own cluster:
+#   1. Copy this file to gateway.yaml  (gateway.yaml is git-ignored)
+#   2. Replace the contents with ingress resources suitable for your cluster
+#      (e.g. standard Ingress, Istio VirtualService, HTTPRoute, etc.)
+#   3. Keep the ${VARIABLE} placeholders — they are substituted by envsubst
+#      in the deploy:gateways pipeline job
+#
+# Services and ports that need to be exposed:
+#
+#   edc-connector-connector     8081  /api/management
+#   edc-connector-connector     8082  /api/dsp
+#   edc-connector-connector     8083  /api/control
+#   edc-connector-connector     8084  /api/catalog
+#   edc-connector-connector     8085  /api/version
+#   edc-connector-connector     8086  /api/catalog-proxy
+#   edc-connector-connector    11001  /api/public
+#   edc-connector-dashboard     8080  /
+#   edc-connector-keycloak      8080  /              (if ENABLE_IDENTITY_PROVIDER=true)
+#   edc-connector-identity-hub  7083  /              (if ENABLE_IDENTITY_HUB=true)
+#   edc-connector-identity-hub  7080  /api
+#   edc-connector-identity-hub  7081  /api/credentials
+#   edc-connector-identity-hub  7082  /api/identity
+#   edc-connector-identity-hub  7085  /api/version
+#   edc-connector-identity-hub  7086  /api/sts
+#   edc-connector-vault-${CONNECTOR_ID}-ih  8200  /  (if ENABLE_IDENTITY_HUB=true)
+#   edc-connector-storage       9001  /              (if ENABLE_STORAGE=true)
+#   edc-connector-storage       9000  /s3
+#   edc-connector-consumer-backend  4000  /          (if ENABLE_STORAGE=true)
+#
+# Required environment variables (substituted by envsubst):
+#   NAMESPACE, CONNECTOR_ID, CONNECTOR_HOST, DASHBOARD_HOST, KEYCLOAK_HOST,
+#   IDENTITY_HUB_HOST, KEYVAULT_HOST, STORAGE_HOST, CONSUMER_BACKEND_HOST
+###############################################################################
+
+# ---------------------------------------------------------------------------
+# Connector  (required)
+# Exposes multiple API endpoints on separate ports
+# ---------------------------------------------------------------------------
+apiVersion: geodan.nl/v1
+kind: Gateway
+metadata:
+  name: edc-connector-connector
+  namespace: ${NAMESPACE}
+spec:
+  host: "${CONNECTOR_HOST}"
+  routes:
+    - service: edc-connector-connector
+      port: 8081
+      path: /api/management
+      auth:
+        type: public
+      keepContext: true
+
+    - service: edc-connector-connector
+      port: 8082
+      path: /api/dsp
+      auth:
+        type: public
+      keepContext: true
+
+    - service: edc-connector-connector
+      port: 8083
+      path: /api/control
+      auth:
+        type: public
+      keepContext: true
+
+    - service: edc-connector-connector
+      port: 8084
+      path: /api/catalog
+      auth:
+        type: public
+      keepContext: true
+
+    - service: edc-connector-connector
+      port: 8085
+      path: /api/version
+      auth:
+        type: public
+      keepContext: true
+
+    - service: edc-connector-connector
+      port: 8086
+      path: /api/catalog-proxy
+      auth:
+        type: public
+      keepContext: true
+
+    - service: edc-connector-connector
+      port: 11001
+      path: /api/public
+      auth:
+        type: public
+      keepContext: true
+
+---
+# ---------------------------------------------------------------------------
+# Dashboard  (required)
+# ---------------------------------------------------------------------------
+apiVersion: geodan.nl/v1
+kind: Gateway
+metadata:
+  name: edc-connector-dashboard
+  namespace: ${NAMESPACE}
+spec:
+  host: "${DASHBOARD_HOST}"
+  routes:
+    - service: edc-connector-dashboard
+      port: 8080
+      path: /
+      auth:
+        type: public
+      keepContext: true
+
+---
+# ---------------------------------------------------------------------------
+# Keycloak / Identity Provider  (optional — remove if ENABLE_IDENTITY_PROVIDER=false)
+# ---------------------------------------------------------------------------
+apiVersion: geodan.nl/v1
+kind: Gateway
+metadata:
+  name: edc-connector-keycloak
+  namespace: ${NAMESPACE}
+spec:
+  host: "${KEYCLOAK_HOST}"
+  routes:
+    - service: edc-connector-keycloak
+      port: 8080
+      path: /
+      auth:
+        type: public
+      keepContext: true
+
+---
+# ---------------------------------------------------------------------------
+# Identity Hub  (optional — remove if ENABLE_IDENTITY_HUB=false)
+# ---------------------------------------------------------------------------
+apiVersion: geodan.nl/v1
+kind: Gateway
+metadata:
+  name: edc-connector-identity-hub
+  namespace: ${NAMESPACE}
+spec:
+  host: "${IDENTITY_HUB_HOST}"
+  routes:
+    # DID document endpoint — root path, no prefix
+    - service: edc-connector-identity-hub
+      port: 7083
+      path: /
+      auth:
+        type: public
+      keepContext: true
+
+    - service: edc-connector-identity-hub
+      port: 7080
+      path: /api
+      auth:
+        type: public
+      keepContext: true
+
+    - service: edc-connector-identity-hub
+      port: 7081
+      path: /api/credentials
+      auth:
+        type: public
+      keepContext: true
+
+    - service: edc-connector-identity-hub
+      port: 7082
+      path: /api/identity
+      auth:
+        type: public
+      keepContext: true
+
+    - service: edc-connector-identity-hub
+      port: 7085
+      path: /api/version
+      auth:
+        type: public
+      keepContext: true
+
+    - service: edc-connector-identity-hub
+      port: 7086
+      path: /api/sts
+      auth:
+        type: public
+      keepContext: true
+
+---
+# ---------------------------------------------------------------------------
+# Vault  (optional — remove if ENABLE_IDENTITY_HUB=false)
+# Service name = edc-connector-vault-${CONNECTOR_ID}-ih
+# ---------------------------------------------------------------------------
+apiVersion: geodan.nl/v1
+kind: Gateway
+metadata:
+  name: edc-connector-vault
+  namespace: ${NAMESPACE}
+spec:
+  host: "${KEYVAULT_HOST}"
+  routes:
+    - service: edc-connector-vault-${CONNECTOR_ID}-ih
+      port: 8200
+      path: /
+      auth:
+        type: public
+      keepContext: true
+
+---
+# ---------------------------------------------------------------------------
+# Storage  (optional — remove if ENABLE_STORAGE=false)
+# ---------------------------------------------------------------------------
+apiVersion: geodan.nl/v1
+kind: Gateway
+metadata:
+  name: edc-connector-storage
+  namespace: ${NAMESPACE}
+spec:
+  host: "${STORAGE_HOST}"
+  routes:
+    - service: edc-connector-storage
+      port: 9001
+      path: /
+      auth:
+        type: public
+      keepContext: true
+
+    - service: edc-connector-storage
+      port: 9000
+      path: /s3
+      auth:
+        type: public
+      keepContext: true
+
+---
+# ---------------------------------------------------------------------------
+# Consumer Backend  (optional — remove if ENABLE_STORAGE=false)
+# ---------------------------------------------------------------------------
+apiVersion: geodan.nl/v1
+kind: Gateway
+metadata:
+  name: edc-connector-consumer-backend
+  namespace: ${NAMESPACE}
+spec:
+  host: "${CONSUMER_BACKEND_HOST}"
+  routes:
+    - service: edc-connector-consumer-backend
+      port: 4000
+      path: /
+      auth:
+        type: public
+      keepContext: true
