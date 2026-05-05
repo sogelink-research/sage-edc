@@ -49,7 +49,7 @@ variables:
 
   IMAGE_TAG: "latest"
   ENABLE_IDENTITY_PROVIDER: "true"  # Keycloak-based identity provider for EDC (required by dashboard)
-  ENABLE_IDENTITY_HUB: "false"      # Identity Hub component for data space integration (optional)
+  ENABLE_IDENTITY_HUB: "true"       # Identity Hub component for data space integration (optional)
   ENABLE_STORAGE: "true"            # RustFS-based storage service for EDC (optional, but recommended for real workloads)
   ANSIBLE_FORCE_COLOR: "true"       # Force color output in Ansible logs for better readability
   # Upstream repo containing the deployment playbooks
