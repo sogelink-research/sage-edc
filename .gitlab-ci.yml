@@ -387,12 +387,9 @@ init:vault:
   stage: configure
   script:
     - cd "${WORK_DIR}"
-    - make deploy-env ANSIBLE_ARGS="-e @vars/overrides.yaml"
-    - echo "Waiting for Vault pod to be ready..."
-    - kubectl -n "${K8S_NAMESPACE}" rollout status statefulset/edc-connector-vault-${CONNECTOR_ID}-ih --timeout=300s
-    # Restore Vault credentials from the cluster if Vault was previously initialized.
-    # vault-init-unseal.sh reads VAULT_UNSEAL_KEY + VAULT_ROOT_TOKEN from secrets/vault.secrets,
-    # but that file is lost between CI jobs. We persist it as a K8s secret instead.
+    # Restore Vault credentials BEFORE make deploy-env, which renders secrets/vault.secrets
+    # with empty placeholders (force: false means it only creates the file if absent).
+    # Writing our restored content first means deploy-env won't overwrite it.
     - |
       mkdir -p secrets
       if kubectl -n "${K8S_NAMESPACE}" get secret vault-pipeline-credentials >/dev/null 2>&1; then
@@ -400,9 +397,14 @@ init:vault:
           | jq -r '.data | to_entries[] | "\(.key)=\(.value | @base64d)"' \
           > secrets/vault.secrets
         echo "Restored Vault credentials from vault-pipeline-credentials secret"
+      else
+        echo "No vault-pipeline-credentials secret found — Vault will be initialized fresh"
       fi
+    - make deploy-env ANSIBLE_ARGS="-e @vars/overrides.yaml"
+    - echo "Waiting for Vault pod to be ready..."
+    - kubectl -n "${K8S_NAMESPACE}" rollout status statefulset/edc-connector-vault-${CONNECTOR_ID}-ih --timeout=300s
     - make init-vault
-    # Persist credentials back to the cluster so they survive the next pipeline run.
+    # Persist credentials to the cluster so they survive the next pipeline run.
     - |
       if [ -s secrets/vault.secrets ]; then
         kubectl -n "${K8S_NAMESPACE}" create secret generic vault-pipeline-credentials \
@@ -517,4 +519,5 @@ cleanup:edc:
     - kubectl -n "${NS}" get all,pvc,configmap,secret,gateway 2>/dev/null || true
   rules:
     - when: manual
+  needs: []
   allow_failure: true
