@@ -390,7 +390,26 @@ init:vault:
     - make deploy-env ANSIBLE_ARGS="-e @vars/overrides.yaml"
     - echo "Waiting for Vault pod to be ready..."
     - kubectl -n "${K8S_NAMESPACE}" rollout status statefulset/edc-connector-vault-${CONNECTOR_ID}-ih --timeout=300s
+    # Restore Vault credentials from the cluster if Vault was previously initialized.
+    # vault-init-unseal.sh reads VAULT_UNSEAL_KEY + VAULT_ROOT_TOKEN from secrets/vault.secrets,
+    # but that file is lost between CI jobs. We persist it as a K8s secret instead.
+    - |
+      mkdir -p secrets
+      if kubectl -n "${K8S_NAMESPACE}" get secret vault-pipeline-credentials >/dev/null 2>&1; then
+        kubectl -n "${K8S_NAMESPACE}" get secret vault-pipeline-credentials -o json \
+          | jq -r '.data | to_entries[] | "\(.key)=\(.value | @base64d)"' \
+          > secrets/vault.secrets
+        echo "Restored Vault credentials from vault-pipeline-credentials secret"
+      fi
     - make init-vault
+    # Persist credentials back to the cluster so they survive the next pipeline run.
+    - |
+      if [ -s secrets/vault.secrets ]; then
+        kubectl -n "${K8S_NAMESPACE}" create secret generic vault-pipeline-credentials \
+          --from-env-file=secrets/vault.secrets \
+          --dry-run=client -o yaml | kubectl apply -f -
+        echo "Vault credentials persisted to vault-pipeline-credentials secret"
+      fi
   needs:
     - deploy:vault
     - deploy:env
@@ -488,7 +507,7 @@ cleanup:edc:
     - kubectl -n "${NS}" delete configmap -l app="${APP}" --ignore-not-found
     # Secrets (app-managed only)
     - kubectl -n "${NS}" delete secret -l app="${APP}" --ignore-not-found
-    - kubectl -n "${NS}" delete secret dockerhub-creds --ignore-not-found
+    - kubectl -n "${NS}" delete secret dockerhub-creds vault-pipeline-credentials --ignore-not-found
     # PVCs (database + vault data)
     - kubectl -n "${NS}" delete pvc -l app="${APP}" --ignore-not-found
     # ServiceAccounts

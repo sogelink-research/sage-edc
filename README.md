@@ -144,7 +144,7 @@ printf '%s.%s\n' \
 The pipeline is designed to be re-run safely at any time:
 
 - **All deploy stages** use Ansible with `kubernetes.core.k8s`, which calls `kubectl apply` internally — fully idempotent. Existing resources are updated in place; PVCs are never recreated, so database data is preserved.
-- **`init:vault`** — safe to re-run. Vault detects if already initialized and skips re-initialization.
+- **`init:vault`** — safe to re-run. Vault detects if already initialized and skips re-initialization. The Vault unseal key and root token are persisted as a Kubernetes Secret (`vault-pipeline-credentials`) in the cluster after first init, so they survive across pipeline runs.
 - **`configure:keycloak`** — safe to re-run. Realm, clients, and users are created only if not already present.
 - **`init:dataspace`** and **`verify:dataspace`** — safe to re-run.
 - **`cleanup:edc`** — only runs when manually triggered; never part of an automatic re-run.
