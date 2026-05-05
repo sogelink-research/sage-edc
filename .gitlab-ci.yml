@@ -77,11 +77,11 @@ variables:
   # keycloak_db=5Gi, identity_hub_db=5Gi, vault=1Gi, storage=10Gi.
   # WARNING: Bound PVCs cannot be shrunk — a full cleanup + redeploy is needed
   # to reduce an already-provisioned PVC size.
-  CONNECTOR_DB_STORAGE_SIZE: "1GB"     # e.g. "1Gi" for testing, "10Gi+" for production
-  KEYCLOAK_DB_STORAGE_SIZE: "1GB"      # e.g. "1Gi" for testing, "5Gi+" for production
-  IDENTITY_HUB_DB_STORAGE_SIZE: "1GB"  # e.g. "1Gi" for testing, "5Gi+" for production
-  VAULT_PVC_STORAGE_SIZE: "1GB"        # e.g. "1Gi" — Vault stores little data; sufficient for most cases
-  STORAGE_PVC_SIZE: "2GB"              # e.g. "2Gi" for testing, "50Gi+" for production file transfers
+  CONNECTOR_DB_STORAGE_SIZE: "1Gi"     # e.g. "1Gi" for testing, "10Gi+" for production
+  KEYCLOAK_DB_STORAGE_SIZE: "1Gi"      # e.g. "1Gi" for testing, "5Gi+" for production
+  IDENTITY_HUB_DB_STORAGE_SIZE: "1Gi"  # e.g. "1Gi" for testing, "5Gi+" for production
+  VAULT_PVC_STORAGE_SIZE: "1Gi"        # e.g. "1Gi" — Vault stores little data; sufficient for most cases
+  STORAGE_PVC_SIZE: "2Gi"              # e.g. "2Gi" for testing, "50Gi+" for production file transfers
 
 stages:
   - prepare
