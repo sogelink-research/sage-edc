@@ -72,6 +72,17 @@ variables:
   CONSUMER_BACKEND_HOST: "${CONNECTOR_ID}.edc-consumer.${DOMAIN_BASE}"
   KEYVAULT_HOST: "${CONNECTOR_ID}.edc-vault.${DOMAIN_BASE}"
 
+  # ---- PVC sizes (optional — unset means PSNC upstream defaults apply) ----
+  # Set these as CI/CD variables to override. PSNC defaults: connector_db=5Gi,
+  # keycloak_db=5Gi, identity_hub_db=5Gi, vault=1Gi, storage=10Gi.
+  # WARNING: Bound PVCs cannot be shrunk — a full cleanup + redeploy is needed
+  # to reduce an already-provisioned PVC size.
+  CONNECTOR_DB_STORAGE_SIZE: ""     # e.g. "1Gi" for testing, "10Gi+" for production
+  KEYCLOAK_DB_STORAGE_SIZE: ""      # e.g. "1Gi" for testing, "5Gi+" for production
+  IDENTITY_HUB_DB_STORAGE_SIZE: ""  # e.g. "1Gi" for testing, "5Gi+" for production
+  VAULT_PVC_STORAGE_SIZE: ""        # e.g. "1Gi" — Vault stores little data; sufficient for most cases
+  STORAGE_PVC_SIZE: ""              # e.g. "2Gi" for testing, "50Gi+" for production file transfers
+
 stages:
   - prepare
   - deploy-infra
@@ -155,6 +166,14 @@ stages:
         requests: { cpu: "100m", memory: "256Mi" }
         limits:   { cpu: "500m", memory: "512Mi" }
       EOF
+
+    # ---- optional PVC size overrides (only written when CI variable is set) ----
+    - |
+      [ -n "${CONNECTOR_DB_STORAGE_SIZE:-}" ]    && echo "connector_db_storage_size: \"${CONNECTOR_DB_STORAGE_SIZE}\""       >> vars/overrides.yaml || true
+      [ -n "${KEYCLOAK_DB_STORAGE_SIZE:-}" ]     && echo "keycloak_db_storage_size: \"${KEYCLOAK_DB_STORAGE_SIZE}\""         >> vars/overrides.yaml || true
+      [ -n "${IDENTITY_HUB_DB_STORAGE_SIZE:-}" ] && echo "identity_hub_db_storage_size: \"${IDENTITY_HUB_DB_STORAGE_SIZE}\"" >> vars/overrides.yaml || true
+      [ -n "${VAULT_PVC_STORAGE_SIZE:-}" ]       && echo "vault_pvc_storage_size: \"${VAULT_PVC_STORAGE_SIZE}\""             >> vars/overrides.yaml || true
+      [ -n "${STORAGE_PVC_SIZE:-}" ]             && echo "storage_pvc_size: \"${STORAGE_PVC_SIZE}\""                         >> vars/overrides.yaml || true
 
     # ---- patch upstream templates for strict cluster policies ----
     # Uses Python (already installed) instead of sed for reliable multi-line edits.
@@ -515,8 +534,7 @@ cleanup:edc:
     # ServiceAccounts
     - kubectl -n "${NS}" delete sa -l app="${APP}" --ignore-not-found
     # Summary
-    - echo "=== Remaining resources in ${NS} ==="
-    - kubectl -n "${NS}" get all,pvc,configmap,secret,gateway 2>/dev/null || true
+    - echo "=== Cleanup complete. All resources of app ${APP} have been removed ==="
   rules:
     - when: manual
   needs: []
