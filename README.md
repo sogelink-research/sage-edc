@@ -175,6 +175,7 @@ The upstream PSNC templates are patched automatically by the pipeline to comply 
 | All three Postgres StatefulSets | Pod `securityContext` (`fsGroup: 1001`, `runAsUser: 1001`) + container resource limits |
 | Vault StatefulSet | Pod `securityContext` (`fsGroup: 100`, `runAsUser: 100`) + container `runAsUser: 100` |
 | Storage Deployment | Fixes upstream typo `podSecurityContext` → `securityContext` |
+| `deploy-vault.yaml` | Suppresses the OpenShift `Route` task (`when: false`) — ingress is handled by `deploy:gateways` instead |
 
 These patches are idempotent (skipped if already applied) and are only applied to the cloned upstream templates, never to your own files.
 

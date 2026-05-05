@@ -159,6 +159,7 @@ stages:
     # ---- patch upstream templates for strict cluster policies ----
     # Uses Python (already installed) instead of sed for reliable multi-line edits.
     # Cluster enforces: ResourceQuota (limits.memory) + PodSecurity (runAsNonRoot).
+    # Also suppresses OpenShift-only tasks (Routes) that fail on plain Kubernetes.
     # NOTE: YAML | block strips 6 leading spaces, so Python string literals use
     # an ind() helper to add correct indentation at runtime.
     - |
@@ -224,6 +225,13 @@ stages:
       print("== Patching Storage template ==")
       replace("templates/storage/storage-deployment.yaml.j2",
               ind("podSecurityContext:", 6), ind("securityContext:", 6))
+
+      # --- deploy-vault.yaml: suppress OpenShift Route task (not available on plain K8s) ---
+      # The vault-route task is redundant — we expose Vault via our own gateway.yaml instead.
+      print("== Patching deploy-vault.yaml ==")
+      replace("deploy-vault.yaml",
+              "      when: enable_identity_hub | bool",
+              "      when: false  # suppressed: OpenShift Route not available on plain Kubernetes")
       PYEOF
 
     - |
