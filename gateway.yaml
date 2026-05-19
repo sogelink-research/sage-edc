@@ -131,21 +131,6 @@ metadata:
 spec:
   host: "${IDENTITY_HUB_HOST}"
   routes:
-    # DID document endpoint — root path, no prefix
-    - service: edc-connector-identity-hub
-      port: 7083
-      path: /
-      auth:
-        type: public
-      keepContext: true
-
-    - service: edc-connector-identity-hub
-      port: 7080
-      path: /api
-      auth:
-        type: public
-      keepContext: true
-
     - service: edc-connector-identity-hub
       port: 7081
       path: /api/credentials
@@ -173,6 +158,21 @@ spec:
       auth:
         type: public
       keepContext: true
+
+    - service: edc-connector-identity-hub
+      port: 7080
+      path: /api
+      auth:
+        type: public
+      keepContext: true
+
+    - service: edc-connector-identity-hub
+      port: 7083
+      path: /
+      auth:
+        type: public
+      keepContext: true
+
 
 ---
 # ---------------------------------------------------------------------------
