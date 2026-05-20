@@ -469,13 +469,16 @@ init:dataspace:
     - cd "${WORK_DIR}"
     - echo "DSH_API_KEY=[${DSH_API_KEY:-UNSET}]"
     - make deploy-env ANSIBLE_ARGS="-e @vars/overrides.yaml"
+    # Ensure DSH_API_KEY reaches render-dataspace-config even if the dotenv template omits it
+    # or if the CI variable is scoped/protected. Use a placeholder when SKIP_VC=true.
+    - printf 'DSH_API_KEY=%s\n' "${DSH_API_KEY:-placeholder-skip-vc}" >> .env
     - echo "=== .env DSH_API_KEY ===" && grep -E '^DSH_API_KEY' .env || echo "(not in .env)"
     # Dump generated config for debugging
     - make render-dataspace-config
     - echo "=== dataspace.json ===" && cat .generated/dataspace-config/dataspace.json || echo "(missing)"
     - echo "=== participant.json ===" && cat .generated/dataspace-config/participants/participant.json || echo "(missing)"
     - echo "=== certs ===" && ls -la .generated/dataspace-config/certs/ 2>/dev/null || echo "(no certs dir)"
-    - make init-dataspace
+    - make init-dataspace SKIP_VC=true # skip VC issuance for now since it requires a working dataspace hub
   needs:
     - init:vault
     - job: configure:keycloak
