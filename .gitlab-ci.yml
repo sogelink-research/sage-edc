@@ -22,6 +22,10 @@
 #   ENABLE_IDENTITY_HUB         true/false (default: false)
 #   ENABLE_STORAGE              true/false (default: true)
 #
+#   STS_CLIENT_SECRET (optional) Vault alias name for the STS client secret — used as the KEY in Vault, NOT the secret value itself.
+#                     The actual secret is generated and stored by init:dataspace. Keep this short and stable (e.g. "sts-client-secret").
+#                     Default: "sts-client-secret"
+#
 # Secrets — generate with: openssl rand -base64 32 | tr -d '\n'
 #   CONNECTOR_DB_PASSWORD
 #   KEYCLOAK_DB_PASSWORD
@@ -30,7 +34,6 @@
 #   API_AUTH_KEY
 #   RUSTFS_ACCESS_KEY
 #   RUSTFS_SECRET_KEY
-#   STS_CLIENT_SECRET (optional, can be empty if not using Vault)
 #   IH_API_SUPERUSER_KEY        format: base64(user).base64(secret) — Generate with: IH_USER="super-user"; IH_SECRET="$(openssl rand -base64 32 | tr -d '\r\n')"; printf '%s.%s\n' "$(printf '%s' "$IH_USER" | openssl base64 -A)" "$(printf '%s' "$IH_SECRET" | openssl base64 -A)"
 #
 #   Optional Docker Hub credentials for pulling images (if not public):
@@ -465,6 +468,11 @@ init:dataspace:
   script:
     - cd "${WORK_DIR}"
     - make deploy-env ANSIBLE_ARGS="-e @vars/overrides.yaml"
+    # Dump generated config for debugging
+    - make render-dataspace-config
+    - echo "=== dataspace.json ===" && cat .generated/dataspace-config/dataspace.json || echo "(missing)"
+    - echo "=== participant.json ===" && cat .generated/dataspace-config/participants/participant.json || echo "(missing)"
+    - echo "=== certs ===" && ls -la .generated/dataspace-config/certs/ 2>/dev/null || echo "(no certs dir)"
     - make init-dataspace
   needs:
     - init:vault
