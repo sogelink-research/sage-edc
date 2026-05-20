@@ -469,7 +469,11 @@ init:dataspace:
     - cd "${WORK_DIR}"
     - make deploy-env ANSIBLE_ARGS="-e @vars/overrides.yaml"
     - make init-identity-hub
-  needs: []
+  needs:
+    - init:vault
+    - job: configure:keycloak
+      optional: true
+    - deploy:gateways
   rules:
     - if: '$ENABLE_IDENTITY_HUB == "true"'
 
