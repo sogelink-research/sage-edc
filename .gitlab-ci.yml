@@ -467,7 +467,9 @@ init:dataspace:
   stage: configure
   script:
     - cd "${WORK_DIR}"
+    - echo "DSH_API_KEY=[${DSH_API_KEY:-UNSET}]"
     - make deploy-env ANSIBLE_ARGS="-e @vars/overrides.yaml"
+    - echo "=== .env DSH_API_KEY ===" && grep -E '^DSH_API_KEY' .env || echo "(not in .env)"
     # Dump generated config for debugging
     - make render-dataspace-config
     - echo "=== dataspace.json ===" && cat .generated/dataspace-config/dataspace.json || echo "(missing)"
