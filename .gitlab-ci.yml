@@ -467,18 +467,21 @@ init:dataspace:
   stage: configure
   script:
     - cd "${WORK_DIR}"
-    - echo "DSH_API_KEY=[${DSH_API_KEY:-UNSET}]"
     - make deploy-env ANSIBLE_ARGS="-e @vars/overrides.yaml"
-    # Ensure DSH_API_KEY reaches render-dataspace-config even if the dotenv template omits it
-    # or if the CI variable is scoped/protected. Use a placeholder when SKIP_VC=true.
-    - printf 'DSH_API_KEY=%s\n' "${DSH_API_KEY:-placeholder-skip-vc}" >> .env
-    - echo "=== .env DSH_API_KEY ===" && grep -E '^DSH_API_KEY' .env || echo "(not in .env)"
-    # Dump generated config for debugging
     - make render-dataspace-config
-    - echo "=== dataspace.json ===" && cat .generated/dataspace-config/dataspace.json || echo "(missing)"
-    - echo "=== participant.json ===" && cat .generated/dataspace-config/participants/participant.json || echo "(missing)"
-    - echo "=== certs ===" && ls -la .generated/dataspace-config/certs/ 2>/dev/null || echo "(no certs dir)"
-    - make init-dataspace SKIP_VC=true # skip VC issuance for now since it requires a working dataspace hub
+    # The upstream render-dataspace-config.sh may not inject api_key into dataspace.json.
+    # Patch it in directly so init-dataspace.sh doesn't fail on the api_key check.
+    - |
+      if [ -n "${DSH_API_KEY:-}" ]; then
+        jq --arg key "${DSH_API_KEY}" '.data_space_hub.api_key = $key' \
+          .generated/dataspace-config/dataspace.json > /tmp/ds.json \
+          && mv /tmp/ds.json .generated/dataspace-config/dataspace.json
+        echo "Injected DSH_API_KEY into dataspace.json"
+      else
+        echo "WARNING: DSH_API_KEY is not set — init-dataspace will fail"
+      fi
+    - cat .generated/dataspace-config/dataspace.json
+    - make init-dataspace SKIP_VC=true
   needs:
     - init:vault
     - job: configure:keycloak
