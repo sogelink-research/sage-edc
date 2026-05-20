@@ -487,11 +487,7 @@ init:dataspace:
     # Stub render-dataspace-config.sh so make's dependency re-run skips the render step
     - printf '#!/bin/bash\necho "[render-dataspace-config] skipped (using pre-rendered config)"\n' > scripts/configure/render-dataspace-config.sh
     - make init-dataspace SKIP_VC=true
-  needs:
-    - init:vault
-    - job: configure:keycloak
-      optional: true
-    - deploy:gateways
+  needs: []
   rules:
     - if: '$ENABLE_IDENTITY_HUB == "true"'
       when: manual
