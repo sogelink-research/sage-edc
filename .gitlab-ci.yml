@@ -325,7 +325,6 @@ workflow:
 prepare:namespace:
   image: dtzar/helm-kubectl:3.11.3
   stage: prepare
-  when: manual
   before_script:
     - mkdir -p ~/.kube
     - '[ -f "$CONFIG" ] || { echo "ERROR: CONFIG file not found (is KUBECONFIG set as a File variable at group level?)"; exit 1; }'
@@ -462,7 +461,6 @@ configure:keycloak:
     - deploy:gateways
   rules:
     - if: '$ENABLE_IDENTITY_PROVIDER == "true"'
-      when: manual
 
 init:dataspace:
   extends: .deploy_base
@@ -470,27 +468,51 @@ init:dataspace:
   script:
     - cd "${WORK_DIR}"
     - make deploy-env ANSIBLE_ARGS="-e @vars/overrides.yaml"
-    - make render-dataspace-config
-    # The upstream render-dataspace-config.sh does not inject api_key into dataspace.json.
-    # Patch it in directly after render, then stub the script so make's dependency re-run
-    # (triggered by init-dataspace's prerequisite) doesn't overwrite our patch.
+    # Patch upstream scripts to fix known issues in the develop branch:
+    # 1. render-dataspace-config.sh may not include DSH_API_KEY in dataspace.json
+    # 2. init-dataspace.sh calls fail() before it is defined (silent crash on empty api_key)
     - |
-      if [ -n "${DSH_API_KEY:-}" ]; then
-        jq --arg key "${DSH_API_KEY}" '.data_space_hub.api_key = $key' \
-          .generated/dataspace-config/dataspace.json > /tmp/ds.json \
-          && mv /tmp/ds.json .generated/dataspace-config/dataspace.json
-        echo "Injected DSH_API_KEY into dataspace.json"
-      else
-        echo "WARNING: DSH_API_KEY is not set — init-dataspace will fail"
+      python3 - <<'PYEOF'
+      import os
+
+      def patch_file(path, old, new, label):
+          if not os.path.isfile(path):
+              print(f"  WARN: {path} not found — skipping {label}")
+              return
+          text = open(path).read()
+          if old not in text:
+              print(f"  SKIP {path}: pattern not found for '{label}'")
+              return
+          open(path, 'w').write(text.replace(old, new))
+          print(f"  OK   {path}: {label}")
+
+      # Patch render-dataspace-config.sh: inject DSH_API_KEY into dataspace.json via jq $ENV
+      patch_file('scripts/configure/render-dataspace-config.sh',
+          'data_space_hub: { url: $url }',
+          'data_space_hub: ({ url: $url } + (if (($ENV.DSH_API_KEY // "") | length) > 0 then { api_key: $ENV.DSH_API_KEY } else {} end))',
+          'add api_key from DSH_API_KEY env var')
+
+      # Patch init-dataspace.sh: inline _fail_early() before the DSH_API_KEY guard so
+      # it does not call the undefined fail() function (bash set -e silent crash)
+      patch_file('scripts/configure/init-dataspace.sh',
+          '\nif [ -z "$DSH_API_KEY" ]; then\n    fail "data_space_hub.api_key is required',
+          '\n_fail_early() { echo "[init-dataspace] FAIL: $*" >&2; exit 1; }\nif [ -z "$DSH_API_KEY" ]; then\n    _fail_early "data_space_hub.api_key is required',
+          'guard fail() call before function is defined')
+      PYEOF
+    - make render-dataspace-config
+    # Call init-dataspace.sh directly — the remote Makefile may not have this target,
+    # causing make to silently no-op via its catch-all %: rule.
+    - |
+      INIT_SCRIPT=$(find . -name "init-dataspace.sh" ! -path "*/.git/*" 2>/dev/null | head -1)
+      if [ -z "$INIT_SCRIPT" ]; then
+        echo "ERROR: init-dataspace.sh not found under ${WORK_DIR}"
+        exit 1
       fi
-    - cat .generated/dataspace-config/dataspace.json
-    # Stub render-dataspace-config.sh so make's dependency re-run skips the render step
-    - printf '#!/bin/bash\necho "[render-dataspace-config] skipped (using pre-rendered config)"\n' > scripts/configure/render-dataspace-config.sh
-    - make init-dataspace SKIP_VC=true
+      echo "Running: bash ${INIT_SCRIPT} --config .generated/dataspace-config --skip-vc"
+      bash "${INIT_SCRIPT}" --config .generated/dataspace-config --skip-vc
   needs: []
   rules:
     - if: '$ENABLE_IDENTITY_HUB == "true"'
-      when: manual
 
 # ---------------------------------------------------------------------------
 # Stage: verify — smoke tests and resource listing
@@ -506,7 +528,6 @@ verify:dataspace:
     - init:dataspace
   rules:
     - if: '$ENABLE_IDENTITY_HUB == "true"'
-      when: manual
   allow_failure: true
 
 verify:resources:
