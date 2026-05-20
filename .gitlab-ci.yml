@@ -500,17 +500,26 @@ init:dataspace:
           'guard fail() call before function is defined')
       PYEOF
     - make render-dataspace-config
-    # Call init-dataspace.sh directly — the remote Makefile may not have this target,
-    # causing make to silently no-op via its catch-all %: rule.
+    # Call init-dataspace.sh directly (the Makefile target uses its own render prerequisite)
     - |
-      INIT_SCRIPT=$(find . -name "init-dataspace.sh" ! -path "*/.git/*" 2>/dev/null | head -1)
-      if [ -z "$INIT_SCRIPT" ]; then
-        echo "ERROR: init-dataspace.sh not found under ${WORK_DIR}"
+      INIT_SCRIPT="./scripts/configure/init-dataspace.sh"
+      if [ ! -f "$INIT_SCRIPT" ]; then
+        echo "Not at expected path, searching..."
+        INIT_SCRIPT=$(find /app/edc-mvds -name "init-dataspace.sh" -type f 2>/dev/null | head -1)
+      fi
+      if [ -z "$INIT_SCRIPT" ] || [ ! -f "$INIT_SCRIPT" ]; then
+        echo "ERROR: init-dataspace.sh not found anywhere in the cloned repo"
+        echo "Listing scripts/configure/:"
+        ls -la scripts/configure/ 2>/dev/null || echo "(dir not found)"
         exit 1
       fi
       echo "Running: bash ${INIT_SCRIPT} --config .generated/dataspace-config --skip-vc"
       bash "${INIT_SCRIPT}" --config .generated/dataspace-config --skip-vc
-  needs: []
+  needs:
+    - init:vault
+    - job: configure:keycloak
+      optional: true
+    - deploy:gateways
   rules:
     - if: '$ENABLE_IDENTITY_HUB == "true"'
 
