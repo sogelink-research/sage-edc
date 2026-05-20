@@ -159,20 +159,6 @@ spec:
         type: public
       keepContext: true
 
-    - service: edc-connector-identity-hub-api
-      port: 7080
-      path: /api
-      auth:
-        type: public
-      keepContext: true
-
-    - service: edc-connector-identity-hub-did
-      port: 7083
-      path: /
-      auth:
-        type: public
-      keepContext: true
-
 
 ---
 # ---------------------------------------------------------------------------
