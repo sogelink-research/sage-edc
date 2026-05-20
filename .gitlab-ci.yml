@@ -92,6 +92,15 @@ stages:
   - cleanup
 
 # ---------------------------------------------------------------------------
+# Workflow rules — pipeline only runs when triggered manually via the UI/API
+# ---------------------------------------------------------------------------
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_PIPELINE_SOURCE == "api"'
+    - if: '$CI_PIPELINE_SOURCE == "trigger"'
+
+# ---------------------------------------------------------------------------
 # Reusable hidden job — clones upstream, installs tooling, renders config
 # ---------------------------------------------------------------------------
 .deploy_base:
@@ -394,31 +403,6 @@ deploy:gateways:
     - export KEYVAULT_HOST="${KEYVAULT_HOST:-vault.example.org}"
     - export STORAGE_HOST="${STORAGE_HOST:-storage.example.org}"
     - export CONSUMER_BACKEND_HOST="${CONSUMER_BACKEND_HOST:-consumer-backend.example.org}"
-    # Create per-port Services for Identity Hub (Geodan Gateway CRD ignores port
-    # when multiple routes reference the same service name)
-    - |
-      for pair in api:7080 credentials:7081 identity:7082 did:7083 version:7085 sts:7086; do
-        NAME="${pair%%:*}"
-        PORT="${pair##*:}"
-        cat <<EOF | kubectl apply -f -
-      apiVersion: v1
-      kind: Service
-      metadata:
-        name: edc-connector-identity-hub-${NAME}
-        namespace: ${NAMESPACE}
-        labels:
-          app: edc-connector
-          component: identity-hub
-      spec:
-        selector:
-          app: edc-connector
-          component: identity-hub
-        ports:
-          - name: ${NAME}
-            port: ${PORT}
-            targetPort: ${PORT}
-      EOF
-      done
     - envsubst < gateway.yaml | kubectl apply -f -
   needs:
     - deploy:services
@@ -533,15 +517,15 @@ cleanup:edc:
     - APP="edc-connector"
     - echo "=== Removing all EDC resources from namespace ${NS} ==="
     # Gateways (Geodan CRD)
-    - kubectl -n "${NS}" delete gateway -l app="${APP}" --ignore-not-found
-    - kubectl -n "${NS}" delete gateway
-        "${CONNECTOR_ID}-connector"
-        "${CONNECTOR_ID}-dashboard"
-        "${CONNECTOR_ID}-keycloak"
-        "${CONNECTOR_ID}-identity-hub"
-        "${CONNECTOR_ID}-vault"
-        "${CONNECTOR_ID}-storage"
-        "${CONNECTOR_ID}-consumer-backend"
+    - |
+      kubectl -n "${NS}" delete gateway.geodan.nl \
+        ${CONNECTOR_ID}-connector \
+        ${CONNECTOR_ID}-dashboard \
+        ${CONNECTOR_ID}-keycloak \
+        ${CONNECTOR_ID}-identity-hub \
+        ${CONNECTOR_ID}-vault \
+        ${CONNECTOR_ID}-storage \
+        ${CONNECTOR_ID}-consumer-backend \
         --ignore-not-found
     # Deployments
     - kubectl -n "${NS}" delete deploy -l app="${APP}" --ignore-not-found
