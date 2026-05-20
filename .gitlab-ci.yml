@@ -325,6 +325,7 @@ workflow:
 prepare:namespace:
   image: dtzar/helm-kubectl:3.11.3
   stage: prepare
+  when: manual
   before_script:
     - mkdir -p ~/.kube
     - '[ -f "$CONFIG" ] || { echo "ERROR: CONFIG file not found (is KUBECONFIG set as a File variable at group level?)"; exit 1; }'
@@ -461,6 +462,7 @@ configure:keycloak:
     - deploy:gateways
   rules:
     - if: '$ENABLE_IDENTITY_PROVIDER == "true"'
+      when: manual
 
 init:dataspace:
   extends: .deploy_base
@@ -470,8 +472,8 @@ init:dataspace:
     - make deploy-env ANSIBLE_ARGS="-e @vars/overrides.yaml"
     - make render-dataspace-config
     # The upstream render-dataspace-config.sh does not inject api_key into dataspace.json.
-    # Patch it in directly. We then call the script directly (not via make) to avoid
-    # make's dependency re-run of render-dataspace-config which would overwrite our patch.
+    # Patch it in directly after render, then stub the script so make's dependency re-run
+    # (triggered by init-dataspace's prerequisite) doesn't overwrite our patch.
     - |
       if [ -n "${DSH_API_KEY:-}" ]; then
         jq --arg key "${DSH_API_KEY}" '.data_space_hub.api_key = $key' \
@@ -482,7 +484,9 @@ init:dataspace:
         echo "WARNING: DSH_API_KEY is not set — init-dataspace will fail"
       fi
     - cat .generated/dataspace-config/dataspace.json
-    - bash scripts/configure/init-dataspace.sh --config .generated/dataspace-config --skip-vc
+    # Stub render-dataspace-config.sh so make's dependency re-run skips the render step
+    - printf '#!/bin/bash\necho "[render-dataspace-config] skipped (using pre-rendered config)"\n' > scripts/configure/render-dataspace-config.sh
+    - make init-dataspace SKIP_VC=true
   needs:
     - init:vault
     - job: configure:keycloak
@@ -490,6 +494,7 @@ init:dataspace:
     - deploy:gateways
   rules:
     - if: '$ENABLE_IDENTITY_HUB == "true"'
+      when: manual
 
 # ---------------------------------------------------------------------------
 # Stage: verify — smoke tests and resource listing
@@ -505,6 +510,7 @@ verify:dataspace:
     - init:dataspace
   rules:
     - if: '$ENABLE_IDENTITY_HUB == "true"'
+      when: manual
   allow_failure: true
 
 verify:resources:
