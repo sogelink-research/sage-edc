@@ -468,58 +468,8 @@ init:dataspace:
   script:
     - cd "${WORK_DIR}"
     - make deploy-env ANSIBLE_ARGS="-e @vars/overrides.yaml"
-    # Patch upstream scripts to fix known issues in the develop branch:
-    # 1. render-dataspace-config.sh may not include DSH_API_KEY in dataspace.json
-    # 2. init-dataspace.sh calls fail() before it is defined (silent crash on empty api_key)
-    - |
-      python3 - <<'PYEOF'
-      import os
-
-      def patch_file(path, old, new, label):
-          if not os.path.isfile(path):
-              print(f"  WARN: {path} not found — skipping {label}")
-              return
-          text = open(path).read()
-          if old not in text:
-              print(f"  SKIP {path}: pattern not found for '{label}'")
-              return
-          open(path, 'w').write(text.replace(old, new))
-          print(f"  OK   {path}: {label}")
-
-      # Patch render-dataspace-config.sh: inject DSH_API_KEY into dataspace.json via jq $ENV
-      patch_file('scripts/configure/render-dataspace-config.sh',
-          'data_space_hub: { url: $url }',
-          'data_space_hub: ({ url: $url } + (if (($ENV.DSH_API_KEY // "") | length) > 0 then { api_key: $ENV.DSH_API_KEY } else {} end))',
-          'add api_key from DSH_API_KEY env var')
-
-      # Patch init-dataspace.sh: inline _fail_early() before the DSH_API_KEY guard so
-      # it does not call the undefined fail() function (bash set -e silent crash)
-      patch_file('scripts/configure/init-dataspace.sh',
-          '\nif [ -z "$DSH_API_KEY" ]; then\n    fail "data_space_hub.api_key is required',
-          '\n_fail_early() { echo "[init-dataspace] FAIL: $*" >&2; exit 1; }\nif [ -z "$DSH_API_KEY" ]; then\n    _fail_early "data_space_hub.api_key is required',
-          'guard fail() call before function is defined')
-      PYEOF
-    - make render-dataspace-config
-    # Call init-dataspace.sh directly (the Makefile target uses its own render prerequisite)
-    - |
-      INIT_SCRIPT="./scripts/configure/init-dataspace.sh"
-      if [ ! -f "$INIT_SCRIPT" ]; then
-        echo "Not at expected path, searching..."
-        INIT_SCRIPT=$(find /app/edc-mvds -name "init-dataspace.sh" -type f 2>/dev/null | head -1)
-      fi
-      if [ -z "$INIT_SCRIPT" ] || [ ! -f "$INIT_SCRIPT" ]; then
-        echo "ERROR: init-dataspace.sh not found anywhere in the cloned repo"
-        echo "Listing scripts/configure/:"
-        ls -la scripts/configure/ 2>/dev/null || echo "(dir not found)"
-        exit 1
-      fi
-      echo "Running: bash ${INIT_SCRIPT} --config .generated/dataspace-config --skip-vc"
-      bash "${INIT_SCRIPT}" --config .generated/dataspace-config --skip-vc
-  needs:
-    - init:vault
-    - job: configure:keycloak
-      optional: true
-    - deploy:gateways
+    - make init-identity-hub
+  needs: []
   rules:
     - if: '$ENABLE_IDENTITY_HUB == "true"'
 
@@ -532,7 +482,7 @@ verify:dataspace:
   script:
     - cd "${WORK_DIR}"
     - make deploy-env ANSIBLE_ARGS="-e @vars/overrides.yaml"
-    - make verify-dataspace VERIFY_VERBOSE=true
+    - make verify-identity-hub VERIFY_VERBOSE=true
   needs:
     - init:dataspace
   rules:
