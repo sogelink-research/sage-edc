@@ -469,8 +469,9 @@ init:dataspace:
     - cd "${WORK_DIR}"
     - make deploy-env ANSIBLE_ARGS="-e @vars/overrides.yaml"
     - make render-dataspace-config
-    # The upstream render-dataspace-config.sh may not inject api_key into dataspace.json.
-    # Patch it in directly so init-dataspace.sh doesn't fail on the api_key check.
+    # The upstream render-dataspace-config.sh does not inject api_key into dataspace.json.
+    # Patch it in directly. We then call the script directly (not via make) to avoid
+    # make's dependency re-run of render-dataspace-config which would overwrite our patch.
     - |
       if [ -n "${DSH_API_KEY:-}" ]; then
         jq --arg key "${DSH_API_KEY}" '.data_space_hub.api_key = $key' \
@@ -481,7 +482,7 @@ init:dataspace:
         echo "WARNING: DSH_API_KEY is not set — init-dataspace will fail"
       fi
     - cat .generated/dataspace-config/dataspace.json
-    - make init-dataspace SKIP_VC=true
+    - bash scripts/configure/init-dataspace.sh --config .generated/dataspace-config --skip-vc
   needs:
     - init:vault
     - job: configure:keycloak
