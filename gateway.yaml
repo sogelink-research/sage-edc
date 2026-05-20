@@ -131,30 +131,44 @@ metadata:
 spec:
   host: "${IDENTITY_HUB_HOST}"
   routes:
-    - service: edc-connector-identity-hub-credentials
+    - service: edc-connector-identity-hub
       port: 7081
       path: /api/credentials
       auth:
         type: public
       keepContext: true
 
-    - service: edc-connector-identity-hub-identity
+    - service: edc-connector-identity-hub
       port: 7082
       path: /api/identity
       auth:
         type: public
       keepContext: true
 
-    - service: edc-connector-identity-hub-version
+    - service: edc-connector-identity-hub
       port: 7085
       path: /api/version
       auth:
         type: public
       keepContext: true
 
-    - service: edc-connector-identity-hub-sts
+    - service: edc-connector-identity-hub
       port: 7086
       path: /api/sts
+      auth:
+        type: public
+      keepContext: true
+
+    - service: edc-connector-identity-hub
+      port: 7080
+      path: /api
+      auth:
+        type: public
+      keepContext: true
+
+    - service: edc-connector-identity-hub
+      port: 7083
+      path: /
       auth:
         type: public
       keepContext: true
