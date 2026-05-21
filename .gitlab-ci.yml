@@ -263,6 +263,16 @@ workflow:
       replace("deploy-vault.yaml",
               "      when: enable_identity_hub | bool",
               "      when: false  # suppressed: OpenShift Route not available on plain Kubernetes")
+
+      # --- Connector configmap: expand EDC_TRUSTED_ISSUERS to include ISSUER_DID + TSG authority ---
+      # The upstream template hardcodes only the PSNC data-space-hub DID.
+      # We extend the array to also include the configured issuer_did and the TSG authority
+      # so EDC accepts tokens from both the PSNC hub and TSG connectors.
+      print("== Patching connector-configmap trusted issuers ==")
+      CONFIGMAP = "templates/connector/connector-configmap.yaml.j2"
+      replace(CONFIGMAP,
+          "EDC_TRUSTED_ISSUERS: '{{ [\"did:web:data-space-hub-ceads-data-space.apps.bst2.paas.psnc.pl\"] | to_json }}'",
+          "EDC_TRUSTED_ISSUERS: '{{ [\"did:web:data-space-hub-ceads-data-space.apps.bst2.paas.psnc.pl\", \"did:web:authority.tsg.beta.geodan.nl\"] | to_json }}'")
       PYEOF
 
     - |
