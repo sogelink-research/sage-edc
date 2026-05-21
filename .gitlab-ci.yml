@@ -107,7 +107,7 @@ workflow:
 # Reusable hidden job — clones upstream, installs tooling, renders config
 # ---------------------------------------------------------------------------
 .deploy_base:
-  image: python:3.12-alpine
+  image: python:3.12-slim
   retry: 1
   before_script:
     # ---- system packages ----
@@ -130,6 +130,8 @@ workflow:
     # ---- kubeconfig ----
     - mkdir -p ~/.kube
     - '[ -f "$CONFIG" ] || { echo "ERROR: CONFIG file not found (is KUBECONFIG set as a File variable at group level?)"; exit 1; }'
+    - ls -l "$CONFIG"
+    - head -n 5 "$CONFIG"lo
     - cp $CONFIG ~/.kube/config
     - chmod 600 ~/.kube/config
     - kubectl version
