@@ -457,7 +457,7 @@ init:vault:
     - |
       VAULT_SCRIPT="./scripts/vault-init-unseal.sh"
       sed -i 's|-- sh -lc|-- sh -c|g' "$VAULT_SCRIPT"
-      sed -i 's|2>/dev/null || true||| true|' "$VAULT_SCRIPT"
+      sed -i 's#2>/dev/null || true#|| true#' "$VAULT_SCRIPT"
     # Diagnostics: verify kubectl exec works at all
     - |
       VAULT_POD="edc-connector-vault-${CONNECTOR_ID}-ih-0"
