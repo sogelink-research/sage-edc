@@ -451,6 +451,21 @@ init:vault:
     # The WebSocket-based exec (enabled by default in kubectl 1.30+) triggers
     # "websocket: close 1006 (abnormal closure)" on Rancher/GKE proxy setups.
     - export KUBECTL_REMOTE_COMMAND_WEBSOCKETS=false
+    # Patch the vault-init-unseal script:
+    # 1. Replace "sh -lc" with "sh -c" — login shells load profiles that can corrupt JSON output
+    # 2. Remove "2>/dev/null" on status check so we can see actual exec errors
+    - |
+      VAULT_SCRIPT="./scripts/vault-init-unseal.sh"
+      sed -i 's|-- sh -lc|-- sh -c|g' "$VAULT_SCRIPT"
+      sed -i 's|2>/dev/null || true||| true|' "$VAULT_SCRIPT"
+    # Diagnostics: verify kubectl exec works at all
+    - |
+      VAULT_POD="edc-connector-vault-${CONNECTOR_ID}-ih-0"
+      echo "--- Diagnostic: checking exec into ${VAULT_POD} ---"
+      kubectl -n "${K8S_NAMESPACE}" get pod "${VAULT_POD}" -o jsonpath='{.status.phase}'
+      echo ""
+      kubectl -n "${K8S_NAMESPACE}" exec "${VAULT_POD}" -- vault status -format=json || echo "Direct exec failed with exit $?"
+      echo "--- End diagnostic ---"
     - |
       for attempt in 1 2 3; do
         echo "init-vault attempt ${attempt}/3"
