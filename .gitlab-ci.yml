@@ -487,9 +487,10 @@ init:vault:
           --dry-run=client -o yaml | kubectl apply -f -
         echo "Vault credentials persisted to vault-pipeline-credentials secret"
       fi
-  #needs:
-  #  - deploy:vault
-  #  - deploy:env
+  allow_failure: true
+  needs:
+    - deploy:vault
+    - deploy:env
 
 configure:keycloak:
   extends: .deploy_base
@@ -514,7 +515,8 @@ init:dataspace:
     - make deploy-env ANSIBLE_ARGS="-e @vars/overrides.yaml"
     - make init-identity-hub
   needs:
-    - init:vault
+    - job: init:vault
+      optional: true
     - job: configure:keycloak
       optional: true
     - deploy:gateways
