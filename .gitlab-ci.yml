@@ -487,9 +487,9 @@ init:vault:
           --dry-run=client -o yaml | kubectl apply -f -
         echo "Vault credentials persisted to vault-pipeline-credentials secret"
       fi
-  needs:
-    - deploy:vault
-    - deploy:env
+  #needs:
+  #  - deploy:vault
+  #  - deploy:env
 
 configure:keycloak:
   extends: .deploy_base
