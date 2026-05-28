@@ -130,8 +130,6 @@ workflow:
     # ---- kubeconfig ----
     - mkdir -p ~/.kube
     - '[ -f "$CONFIG" ] || { echo "ERROR: CONFIG file not found (is KUBECONFIG set as a File variable at group level?)"; exit 1; }'
-    - ls -l "$CONFIG"
-    - head -n 5 "$CONFIG"
     - cp $CONFIG ~/.kube/config
     - chmod 600 ~/.kube/config
     - kubectl version
@@ -446,7 +444,26 @@ init:vault:
     - make deploy-env ANSIBLE_ARGS="-e @vars/overrides.yaml"
     - echo "Waiting for Vault pod to be ready..."
     - kubectl -n "${K8S_NAMESPACE}" rollout status statefulset/edc-connector-vault-${CONNECTOR_ID}-ih --timeout=300s
-    - make init-vault
+   
+    # Give Vault a few extra seconds to fully start its listener after the readiness probe passes.
+    - sleep 15
+    # Force kubectl exec to use the SPDY transport instead of the newer WebSocket protocol.
+    # The WebSocket-based exec (enabled by default in kubectl 1.30+) triggers
+    # "websocket: close 1006 (abnormal closure)" on Rancher/GKE proxy setups.
+    - export KUBECTL_REMOTE_COMMAND_WEBSOCKETS=false
+    - |
+      for attempt in 1 2 3; do
+        echo "init-vault attempt ${attempt}/3"
+        make init-vault && break
+        if [ "${attempt}" -lt 3 ]; then
+          echo "Attempt ${attempt} failed — retrying in 30 s..."
+          sleep 30
+        else
+          echo "All init-vault attempts exhausted."
+          exit 1
+        fi
+      done
+
     # Persist credentials to the cluster so they survive the next pipeline run.
     - |
       if [ -s secrets/vault.secrets ]; then
