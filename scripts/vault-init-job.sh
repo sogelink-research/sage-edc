@@ -44,7 +44,7 @@ kind: Job
 metadata:
   name: ${JOB_NAME}
 spec:
-  backoffLimit: 2
+  backoffLimit: 0
   ttlSecondsAfterFinished: 600
   template:
     spec:
@@ -56,91 +56,108 @@ spec:
           type: RuntimeDefault
       containers:
       - name: vault-init
-        image: alpine:3.20
-        command: ["/bin/sh", "-c"]
+        image: python:3.12-alpine
+        env:
+        - name: VAULT_ADDR
+          value: "${VAULT_ADDR}"
+        - name: UNSEAL_KEY
+          value: "${EXISTING_UNSEAL_KEY}"
+        - name: ROOT_TOKEN
+          value: "${EXISTING_ROOT_TOKEN}"
+        command: ["python3", "-u", "-c"]
         args:
         - |
-          set -e
-          apk add --no-cache curl jq >/dev/null 2>&1
-          VAULT_ADDR="${VAULT_ADDR}"
-          UNSEAL_KEY="${EXISTING_UNSEAL_KEY}"
-          ROOT_TOKEN="${EXISTING_ROOT_TOKEN}"
+          import urllib.request, urllib.error, json, os, sys, time
 
-          echo "Waiting for Vault at \${VAULT_ADDR}..." >&2
-          for i in \$(seq 1 30); do
-            curl -sf -o /dev/null "\${VAULT_ADDR}/v1/sys/seal-status" && break
-            sleep 2
-          done
+          vault_addr = os.environ['VAULT_ADDR']
+          unseal_key = os.environ.get('UNSEAL_KEY', '')
+          root_token = os.environ.get('ROOT_TOKEN', '')
 
-          STATUS=\$(curl -sf "\${VAULT_ADDR}/v1/sys/seal-status")
-          INITIALIZED=\$(echo "\$STATUS" | jq -r '.initialized')
-          SEALED=\$(echo "\$STATUS"      | jq -r '.sealed')
+          def req(method, path, data=None, token=None):
+              url = vault_addr + path
+              headers = {'Content-Type': 'application/json'}
+              if token:
+                  headers['X-Vault-Token'] = token
+              body = json.dumps(data).encode() if data is not None else None
+              r = urllib.request.Request(url, data=body, headers=headers, method=method)
+              try:
+                  with urllib.request.urlopen(r) as resp:
+                      return json.loads(resp.read())
+              except urllib.error.HTTPError as e:
+                  return json.loads(e.read())
 
-          if [ "\$INITIALIZED" != "true" ]; then
-            echo "Initializing Vault..." >&2
-            INIT=\$(curl -sf -X PUT "\${VAULT_ADDR}/v1/sys/init" \
-              -H "Content-Type: application/json" \
-              -d '{"secret_shares":1,"secret_threshold":1}')
-            UNSEAL_KEY=\$(echo "\$INIT" | jq -r '.keys_base64[0]')
-            ROOT_TOKEN=\$(echo "\$INIT" | jq -r '.root_token')
-            if [ -z "\$UNSEAL_KEY" ] || [ "\$UNSEAL_KEY" = "null" ]; then
-              echo "ERROR: init failed: \$INIT" >&2; exit 1
-            fi
-            SEALED="true"
-            echo "Vault initialized." >&2
-          fi
+          print('Waiting for Vault...', file=sys.stderr, flush=True)
+          for _ in range(30):
+              try:
+                  req('GET', '/v1/sys/seal-status')
+                  break
+              except Exception:
+                  time.sleep(2)
 
-          if [ "\$SEALED" = "true" ]; then
-            echo "Unsealing Vault..." >&2
-            curl -sf -X PUT "\${VAULT_ADDR}/v1/sys/unseal" \
-              -H "Content-Type: application/json" \
-              -d "{\"key\":\"\${UNSEAL_KEY}\"}" >/dev/null
-            echo "Vault unsealed." >&2
-          fi
+          status = req('GET', '/v1/sys/seal-status')
+          initialized = status.get('initialized', False)
+          sealed = status.get('sealed', True)
 
-          MOUNTS=\$(curl -sf -H "X-Vault-Token: \${ROOT_TOKEN}" "\${VAULT_ADDR}/v1/sys/mounts")
-          if ! echo "\$MOUNTS" | jq -e '."secret/"' >/dev/null 2>&1; then
-            curl -sf -X POST "\${VAULT_ADDR}/v1/sys/mounts/secret" \
-              -H "X-Vault-Token: \${ROOT_TOKEN}" \
-              -H "Content-Type: application/json" \
-              -d '{"type":"kv","options":{"version":"2"}}' >/dev/null
-            echo "KV v2 enabled at secret/." >&2
-          fi
+          if not initialized:
+              print('Initializing Vault...', file=sys.stderr, flush=True)
+              init = req('PUT', '/v1/sys/init', {'secret_shares': 1, 'secret_threshold': 1})
+              unseal_key = init['keys_base64'][0]
+              root_token = init['root_token']
+              sealed = True
+              print('Vault initialized.', file=sys.stderr, flush=True)
 
-          POLICY='path "secret/data/*" { capabilities = ["create","read","update","delete","list"] } path "secret/metadata/*" { capabilities = ["create","read","update","delete","list"] } path "transit/keys/*" { capabilities = ["read","list"] } path "transit/sign/*" { capabilities = ["update"] } path "transit/verify/*" { capabilities = ["update"] } path "transit/keys/issuer-*" { capabilities = ["create","update","read","list"] } path "secret/data/public-keys/*" { capabilities = ["create","read","update","list"] } path "secret/metadata/public-keys/*" { capabilities = ["read","list","delete"] } path "secret/data/vc-metadata/*" { capabilities = ["create","read","update","list"] }'
-          curl -sf -X PUT "\${VAULT_ADDR}/v1/sys/policies/acl/edc-runtime" \
-            -H "X-Vault-Token: \${ROOT_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d "{\"policy\":\"\${POLICY}\"}" >/dev/null
-          echo "Policy edc-runtime written." >&2
+          if sealed:
+              print('Unsealing Vault...', file=sys.stderr, flush=True)
+              req('PUT', '/v1/sys/unseal', {'key': unseal_key})
+              print('Vault unsealed.', file=sys.stderr, flush=True)
 
-          TOKEN_RESP=\$(curl -sf -X POST "\${VAULT_ADDR}/v1/auth/token/create" \
-            -H "X-Vault-Token: \${ROOT_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d '{"policies":["edc-runtime"],"no_parent":true}')
-          SERVICE_TOKEN=\$(echo "\$TOKEN_RESP" | jq -r '.auth.client_token')
-          if [ -z "\$SERVICE_TOKEN" ] || [ "\$SERVICE_TOKEN" = "null" ]; then
-            echo "ERROR: token create failed: \$TOKEN_RESP" >&2; exit 1
-          fi
-          echo "Service token created." >&2
+          mounts = req('GET', '/v1/sys/mounts', token=root_token)
+          if 'secret/' not in mounts:
+              req('POST', '/v1/sys/mounts/secret', {'type': 'kv', 'options': {'version': '2'}}, token=root_token)
+              print('KV v2 enabled.', file=sys.stderr, flush=True)
 
-          printf 'VAULT_UNSEAL_KEY=%s\n'    "\$UNSEAL_KEY"
-          printf 'VAULT_ROOT_TOKEN=%s\n'     "\$ROOT_TOKEN"
-          printf 'VAULT_SERVICE_TOKEN=%s\n'  "\$SERVICE_TOKEN"
+          policy = (
+              'path "secret/data/*" { capabilities = ["create","read","update","delete","list"] }\n'
+              'path "secret/metadata/*" { capabilities = ["create","read","update","delete","list"] }\n'
+              'path "transit/keys/*" { capabilities = ["read","list"] }\n'
+              'path "transit/sign/*" { capabilities = ["update"] }\n'
+              'path "transit/verify/*" { capabilities = ["update"] }\n'
+              'path "transit/keys/issuer-*" { capabilities = ["create","update","read","list"] }\n'
+              'path "secret/data/public-keys/*" { capabilities = ["create","read","update","list"] }\n'
+              'path "secret/metadata/public-keys/*" { capabilities = ["read","list","delete"] }\n'
+              'path "secret/data/vc-metadata/*" { capabilities = ["create","read","update","list"] }'
+          )
+          req('PUT', '/v1/sys/policies/acl/edc-runtime', {'policy': policy}, token=root_token)
+          print('Policy written.', file=sys.stderr, flush=True)
+
+          token_resp = req('POST', '/v1/auth/token/create',
+              {'policies': ['edc-runtime'], 'no_parent': True}, token=root_token)
+          service_token = token_resp['auth']['client_token']
+          print('Service token created.', file=sys.stderr, flush=True)
+
+          print(f'VAULT_UNSEAL_KEY={unseal_key}')
+          print(f'VAULT_ROOT_TOKEN={root_token}')
+          print(f'VAULT_SERVICE_TOKEN={service_token}')
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
             drop: ["ALL"]
         resources:
-          requests: { cpu: "50m",  memory: "64Mi" }
-          limits:   { cpu: "200m", memory: "128Mi" }
+          requests: { cpu: "50m",  memory: "128Mi" }
+          limits:   { cpu: "200m", memory: "256Mi" }
 JOBEOF
 
 # ---------------------------------------------------------------------------
 # Wait for completion and capture credentials from Job logs.
 # ---------------------------------------------------------------------------
 echo "Waiting for vault-init job to complete..."
-kubectl -n "$NS" wait --for=condition=Complete "job/${JOB_NAME}" --timeout=300s
+if ! kubectl -n "$NS" wait --for=condition=Complete "job/${JOB_NAME}" --timeout=300s; then
+	echo "Job did not complete — last pod logs:" >&2
+	kubectl -n "$NS" logs "job/${JOB_NAME}" >&2 || true
+	kubectl -n "$NS" describe job "$JOB_NAME" >&2 || true
+	kubectl -n "$NS" delete job "$JOB_NAME" --ignore-not-found >/dev/null 2>&1
+	exit 1
+fi
 
 JOB_OUTPUT="$(kubectl -n "$NS" logs "job/${JOB_NAME}")"
 mkdir -p "$(dirname "$SECRETS_FILE")"
