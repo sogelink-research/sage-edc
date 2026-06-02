@@ -464,6 +464,8 @@ init:vault:
         echo "Vault credentials persisted to vault-pipeline-credentials secret"
       fi
   allow_failure: true
+  rules:
+    - when: manual  
   needs:
     - deploy:vault
     - deploy:env
@@ -491,8 +493,8 @@ init:dataspace:
     - make deploy-env ANSIBLE_ARGS="-e @vars/overrides.yaml"
     - make init-identity-hub
   needs:
-    - job: init:vault
-      optional: true
+#    - job: init:vault
+#      optional: true
     - job: configure:keycloak
       optional: true
     - deploy:gateways
