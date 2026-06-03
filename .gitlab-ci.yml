@@ -428,6 +428,7 @@ init:vault:
   stage: configure
   script:
     - cd "${WORK_DIR}"
+    - kubectl version
     # Restore Vault credentials BEFORE make deploy-env, which renders secrets/vault.secrets
     # with empty placeholders (force: false means it only creates the file if absent).
     # Writing our restored content first means deploy-env won't overwrite it.

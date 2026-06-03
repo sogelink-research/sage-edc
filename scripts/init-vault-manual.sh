@@ -2,9 +2,11 @@
 # init-vault-manual.sh — Manual fallback for the init:vault pipeline job.
 #
 # Run this when the pipeline's init:vault job fails (e.g. due to cluster
-# policy restrictions). Vault must already be initialized and unsealed.
-# UNSEAL_KEY and ROOT_TOKEN are read from the vault-pipeline-credentials
-# K8s secret that was persisted by a previous successful run.
+# policy restrictions).
+#
+# NOTE: When running from WSL, kubectl may not find your kubeconfig.
+#       Set the path before running if needed:
+#         export KUBECONFIG=/mnt/c/Users/<you>/.kube/config
 #
 # Usage:
 #   bash scripts/init-vault-manual.sh
@@ -13,44 +15,44 @@ set -euo pipefail
 NS="research-services"
 VAULT_ADDR="https://sogelink.edc-vault.beta.geodan.nl"
 
-# ---------------------------------------------------------------------------
-# Load credentials from the persisted K8s secret
-# ---------------------------------------------------------------------------
-echo "Reading credentials from vault-pipeline-credentials..."
-UNSEAL_KEY=$(kubectl -n "$NS" get secret vault-pipeline-credentials \
-	-o jsonpath='{.data.VAULT_UNSEAL_KEY}' | base64 -d)
-ROOT_TOKEN=$(kubectl -n "$NS" get secret vault-pipeline-credentials \
-	-o jsonpath='{.data.VAULT_ROOT_TOKEN}' | base64 -d)
-
-if [ -z "$UNSEAL_KEY" ] || [ -z "$ROOT_TOKEN" ]; then
-	echo "ERROR: vault-pipeline-credentials secret is missing or incomplete."
-	echo "If Vault was never initialized, run steps 2-3 manually first and re-run."
-	exit 1
-fi
 
 # ---------------------------------------------------------------------------
-# 1. Check status
+# 1. Check Vault status
 # ---------------------------------------------------------------------------
 echo "=== 1. Vault status ==="
 STATUS=$(curl -sf "$VAULT_ADDR/v1/sys/seal-status")
 echo "$STATUS" | jq .
 INITIALIZED=$(echo "$STATUS" | jq -r '.initialized')
-SEALED=$(echo "$STATUS" | jq -r '.sealed')
+SEALED=$(echo "$STATUS"      | jq -r '.sealed')
 
 # ---------------------------------------------------------------------------
-# 2+3. Initialize and/or unseal if needed
+# 2. Initialize if needed — otherwise load credentials from K8s secret
 # ---------------------------------------------------------------------------
 if [ "$INITIALIZED" != "true" ]; then
 	echo "=== 2. Initializing Vault ==="
 	INIT=$(curl -sf -X PUT "$VAULT_ADDR/v1/sys/init" \
 		-H "Content-Type: application/json" \
 		-d '{"secret_shares":1,"secret_threshold":1}')
-	UNSEAL_KEY=$(echo "$INIT" | jq -r '.keys_base64[0]')
-	ROOT_TOKEN=$(echo "$INIT" | jq -r '.root_token')
 	echo "$INIT" | jq .
+	UNSEAL_KEY=$(echo "$INIT" | jq -r '.keys_base64[0]')
+	ROOT_TOKEN=$(echo "$INIT"  | jq -r '.root_token')
 	SEALED="true"
+else
+	echo "Vault already initialized — loading credentials from vault-pipeline-credentials..."
+	UNSEAL_KEY=$(kubectl -n "$NS" get secret vault-pipeline-credentials \
+		-o jsonpath='{.data.VAULT_UNSEAL_KEY}' 2>/dev/null | base64 -d || true)
+	ROOT_TOKEN=$(kubectl -n "$NS" get secret vault-pipeline-credentials \
+		-o jsonpath='{.data.VAULT_ROOT_TOKEN}' 2>/dev/null | base64 -d || true)
+	if [ -z "$UNSEAL_KEY" ] || [ -z "$ROOT_TOKEN" ]; then
+		echo "ERROR: vault-pipeline-credentials secret is missing or incomplete."
+		echo "Set UNSEAL_KEY and ROOT_TOKEN manually and re-run, or redeploy Vault."
+		exit 1
+	fi
 fi
 
+# ---------------------------------------------------------------------------
+# 3. Unseal if needed
+# ---------------------------------------------------------------------------
 if [ "$SEALED" = "true" ]; then
 	echo "=== 3. Unsealing Vault ==="
 	curl -sf -X PUT "$VAULT_ADDR/v1/sys/unseal" \
