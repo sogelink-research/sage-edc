@@ -429,6 +429,7 @@ init:vault:
   script:
     - cd "${WORK_DIR}"
     - kubectl version
+    - kubectl config view
     # Restore Vault credentials BEFORE make deploy-env, which renders secrets/vault.secrets
     # with empty placeholders (force: false means it only creates the file if absent).
     # Writing our restored content first means deploy-env won't overwrite it.
