@@ -427,13 +427,6 @@ init:vault:
   extends: .deploy_base
   stage: configure
   script:
-    - cd "${WORK_DIR}"
-    - echo "KUBECONFIG_FILE=${KUBECONFIG_FILE}"
-    - cat "${KUBECONFIG_FILE}"
-    - echo "KUBECONFIG_RESEARCH=${KUBECONFIG_RESEARCH}"
-    - cat "${KUBECONFIG_RESEARCH}"
-    - kubectl version
-    - kubectl config view
     # Restore Vault credentials BEFORE make deploy-env, which renders secrets/vault.secrets
     # with empty placeholders (force: false means it only creates the file if absent).
     # Writing our restored content first means deploy-env won't overwrite it.
@@ -451,15 +444,7 @@ init:vault:
     - echo "Waiting for Vault pod to be ready..."
     - kubectl -n "${K8S_NAMESPACE}" rollout status statefulset/edc-connector-vault-${CONNECTOR_ID}-ih --timeout=300s
    
-    # Try the upstream script first; fall back to the in-cluster Job if kubectl
-    # exec is blocked by the cluster proxy (returns "400 Bad Request" on upgrades).
-    - |
-      if make init-vault; then
-        echo "init-vault succeeded via kubectl exec"
-      else
-        echo "init-vault failed — falling back to in-cluster Job"
-        bash "${CI_PROJECT_DIR}/scripts/vault-init-job.sh"
-      fi
+    - make init-vault
 
     # Persist credentials to the cluster so they survive the next pipeline run.
     - |
