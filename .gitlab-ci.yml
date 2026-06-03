@@ -48,7 +48,7 @@ variables:
   # KUBECONFIG_FILE is a File-type CI variable — GitLab writes the content to a temp
   # file and sets the variable to its path. Do not name it KUBECONFIG as that name
   # is reserved in some environments. Aliased to CONFIG for internal use.
-  CONFIG: $KUBECONFIG_FILE
+  CONFIG: $KUBECONFIG_RESEARCH
 
   IMAGE_TAG: "latest"
   ENABLE_IDENTITY_PROVIDER: "true"  # Keycloak-based identity provider for EDC (required by dashboard)
