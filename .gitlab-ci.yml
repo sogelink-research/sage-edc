@@ -428,6 +428,10 @@ init:vault:
   stage: configure
   script:
     - cd "${WORK_DIR}"
+    - echo "KUBECONFIG_FILE=${KUBECONFIG_FILE}"
+    - cat "${KUBECONFIG_FILE}"
+    - echo "KUBECONFIG_RESEARCH=${KUBECONFIG_RESEARCH}"
+    - cat "${KUBECONFIG_RESEARCH}"
     - kubectl version
     - kubectl config view
     # Restore Vault credentials BEFORE make deploy-env, which renders secrets/vault.secrets
