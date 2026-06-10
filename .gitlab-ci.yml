@@ -427,6 +427,7 @@ init:vault:
   extends: .deploy_base
   stage: configure
   script:
+    - cd "${WORK_DIR}"
     # Restore Vault credentials BEFORE make deploy-env, which renders secrets/vault.secrets
     # with empty placeholders (force: false means it only creates the file if absent).
     # Writing our restored content first means deploy-env won't overwrite it.
@@ -493,6 +494,107 @@ init:dataspace:
     - if: '$ENABLE_IDENTITY_HUB == "true"'
 
 # ---------------------------------------------------------------------------
+# configure:jsonld-contexts
+#
+# EDC's Titanium JSON-LD loader refuses to fetch remote (https://) contexts.
+# When a TSG counter-party POSTs a DSP message, it includes its TSG-specific
+# contexts (tsg.json, health.json) which EDC cannot resolve, causing the
+# request to fail with HTTP 400 + "LOADING_REMOTE_CONTEXT_FAILED".
+#
+# This job pre-loads the TSG contexts into the EDC connector pod:
+#   1. Fetches the JSON-LD files (from public URL or the tno-security-gateway repo).
+#   2. Stores them in a ConfigMap (one key per file).
+#   3. Patches the connector Deployment to mount the ConfigMap at /etc/edc/contexts.
+#   4. Registers each context via EDC_JSONLD_DOCUMENT_<ALIAS>_PATH/_URL env vars.
+#   5. Triggers a rollout restart and waits for it.
+#
+# Variables (override via CI/CD Variables to pin a different TSG version):
+#   TSG_CONTEXTS_VERSION  TSG contexts version path component (default: "v0.19.0")
+#   TSG_CONTEXTS_BASE     Base URL for the contexts            (default: https://tsg.dataspac.es/contexts)
+# ---------------------------------------------------------------------------
+configure:jsonld-contexts:
+  image: dtzar/helm-kubectl:3.11.3
+  stage: configure
+  variables:
+    TSG_CONTEXTS_VERSION: "v0.19.0"
+    TSG_CONTEXTS_BASE: "https://tsg.dataspac.es/contexts"
+  before_script:
+    - apk add --no-cache curl
+    - mkdir -p ~/.kube
+    - '[ -f "$CONFIG" ] || { echo "ERROR: CONFIG file not found"; exit 1; }'
+    - cp "$CONFIG" ~/.kube/config
+    - chmod 600 ~/.kube/config
+  script:
+    - set -eu
+    - NS="${K8S_NAMESPACE}"
+    - DEPLOY="edc-connector-connector"
+    - CM_NAME="edc-jsonld-contexts"
+    - MOUNT_PATH="/etc/edc/contexts"
+    - TSG_URL="${TSG_CONTEXTS_BASE}/${TSG_CONTEXTS_VERSION}/tsg.json"
+    - HEALTH_URL="${TSG_CONTEXTS_BASE}/${TSG_CONTEXTS_VERSION}/health.json"
+    - DSP_URL="https://w3id.org/dspace/2025/1/context.jsonld"
+
+    - echo "=== Fetching JSON-LD contexts ==="
+    - mkdir -p contexts
+    - curl -fsSL -o contexts/tsg.json    "${TSG_URL}"
+    - curl -fsSL -o contexts/health.json "${HEALTH_URL}"
+    - curl -fsSL -o contexts/dsp.json    "${DSP_URL}"
+    - ls -la contexts
+
+    - echo "=== Creating/updating ConfigMap ${CM_NAME} ==="
+    - |
+      kubectl -n "${NS}" create configmap "${CM_NAME}" \
+        --from-file=tsg.json=contexts/tsg.json \
+        --from-file=health.json=contexts/health.json \
+        --from-file=dsp.json=contexts/dsp.json \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+    - echo "=== Patching deployment ${DEPLOY}: volume + volumeMount ==="
+    - |
+      kubectl -n "${NS}" patch deployment "${DEPLOY}" --type=json -p="$(cat <<JSON
+      [
+        {
+          "op": "add",
+          "path": "/spec/template/spec/volumes/-",
+          "value": {
+            "name": "jsonld-contexts",
+            "configMap": { "name": "${CM_NAME}" }
+          }
+        },
+        {
+          "op": "add",
+          "path": "/spec/template/spec/containers/0/volumeMounts/-",
+          "value": {
+            "name": "jsonld-contexts",
+            "mountPath": "${MOUNT_PATH}",
+            "readOnly": true
+          }
+        }
+      ]
+      JSON
+      )" || echo "  (volume/volumeMount may already be present — continuing)"
+
+    - echo "=== Setting EDC_JSONLD_DOCUMENT_* env vars on ${DEPLOY} ==="
+    - |
+      kubectl -n "${NS}" set env deployment/"${DEPLOY}" \
+        EDC_JSONLD_HTTPS_ENABLED=false \
+        EDC_JSONLD_DOCUMENT_TSG_URL="${TSG_URL}" \
+        EDC_JSONLD_DOCUMENT_TSG_PATH="${MOUNT_PATH}/tsg.json" \
+        EDC_JSONLD_DOCUMENT_HEALTH_URL="${HEALTH_URL}" \
+        EDC_JSONLD_DOCUMENT_HEALTH_PATH="${MOUNT_PATH}/health.json" \
+        EDC_JSONLD_DOCUMENT_DSP2025_URL="${DSP_URL}" \
+        EDC_JSONLD_DOCUMENT_DSP2025_PATH="${MOUNT_PATH}/dsp.json"
+
+    - echo "=== Waiting for rollout to complete ==="
+    - kubectl -n "${NS}" rollout status deployment/"${DEPLOY}" --timeout=300s
+    - echo "=== JSON-LD contexts configured ==="
+  needs:
+    - deploy:services
+  rules:
+    - when: on_success
+  allow_failure: true
+
+# ---------------------------------------------------------------------------
 # Stage: verify — smoke tests and resource listing
 # ---------------------------------------------------------------------------
 verify:dataspace:
@@ -556,6 +658,7 @@ cleanup:edc:
     # Secrets (app-managed only)
     - kubectl -n "${NS}" delete secret -l app="${APP}" --ignore-not-found
     - kubectl -n "${NS}" delete secret dockerhub-creds vault-pipeline-credentials --ignore-not-found
+    - kubectl -n "${NS}" delete configmap edc-jsonld-contexts --ignore-not-found
     # PVCs (database + vault data)
     - kubectl -n "${NS}" delete pvc -l app="${APP}" --ignore-not-found
     # ServiceAccounts
