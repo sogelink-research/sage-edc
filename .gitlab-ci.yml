@@ -549,7 +549,7 @@ configure:jsonld-contexts:
         --from-file=dsp.json=contexts/dsp.json \
         --dry-run=client -o yaml | kubectl apply -f -
 
-    - echo "=== Patching deployment ${DEPLOY}: volume + volumeMount ==="
+    - echo "=== Patching deployment ${DEPLOY} - volume + volumeMount ==="
     - |
       kubectl -n "${NS}" patch deployment "${DEPLOY}" --type=json -p="$(cat <<JSON
       [
