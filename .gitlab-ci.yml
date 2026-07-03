@@ -148,6 +148,7 @@ workflow:
 
       image_tag: "${IMAGE_TAG}"
       image_pull_secret_name: "${DOCKERHUB_USER:+dockerhub-creds}"
+      image_pull_policy: "Always"
 
       enable_identity_provider: ${ENABLE_IDENTITY_PROVIDER}
       enable_identity_hub: ${ENABLE_IDENTITY_HUB}
@@ -456,8 +457,6 @@ init:vault:
         echo "Vault credentials persisted to vault-pipeline-credentials secret"
       fi
   allow_failure: true
-  rules:
-    - when: manual  
   needs:
     - deploy:vault
     - deploy:env
