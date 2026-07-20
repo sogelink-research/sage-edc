@@ -1,5 +1,5 @@
 ###############################################################################
-# GitLab CI/CD — Deploy PSNC EDC MVDS to GKE / Rancher
+# GitLab CI/CD — Deploy PSNC EDC MVDS to Kubernetes
 #
 # This pipeline clones the psnc-edc-mvds repository and uses its Kubernetes
 # deployment instructions (Ansible playbooks + scripts) to deploy the full
@@ -27,27 +27,26 @@
 #                               psnc: the native Keycloak bundled with psnc-edc-mvds
 #
 #   --- SAGE Keycloak options (used only when KEYCLOAK_FLAVOR=sage) ---
-#   SATELLITE_ID                iShare satellite id      (default: EU.EORI.PL12345678)
-#   SATELLITE_URL               iShare satellite URL     (default: https://pr-middleware.62.3.175.232.nip.io/v2.0.1)
-#   ISHARE_CA_PEM               File-type CI variable containing the iShare CA certificate chain (PEM).
-#                               Mounted into Keycloak at /opt/keycloak-keys/sage/ca-file.pem
-#   SAGE_KC_ADMIN               bootstrap admin username (default: tempadmin)
-#   SAGE_KC_ADMIN_PASSWORD      bootstrap admin password (default: tempadmin)
+#   SATELLITE_ID                iShare satellite id      (e.g: EU.EORI.PL12345678)
+#   SATELLITE_URL               iShare satellite URL     (e.g.: https://pr-middleware.62.3.175.232.nip.io/v2.0.1)
+#   SAGE_KC_ADMIN               bootstrap admin username
+#   SAGE_KC_ADMIN_PASSWORD      bootstrap admin password
+#   ISHARE_CA_PEM               File-type CI variable containing the iShare CA certificate chain (PEM). Mounted into Keycloak at /opt/keycloak-keys/sage/ca-file.pem
 #
-#   STS_CLIENT_SECRET (optional) Vault alias name for the STS client secret — used as the KEY in Vault, NOT the secret value itself.
-#                     The actual secret is generated and stored by init:dataspace. Keep this short and stable (e.g. "sts-client-secret").
-#                     Default: "sts-client-secret"
-#
-# Secrets — generate with: openssl rand -base64 32 | tr -d '\n'
+#   --- Secrets — generate with: openssl rand -base64 32 | tr -d '\n' ---
 #   CONNECTOR_DB_PASSWORD
 #   KEYCLOAK_DB_PASSWORD        (KEYCLOAK_FLAVOR=psnc only) password for the native Keycloak's Postgres DB
-#   KEYCLOAK_ADMIN_PASSWORD     (KEYCLOAK_FLAVOR=psnc only) bootstrap admin password for the native Keycloak (admin user "admin").
-#                               For KEYCLOAK_FLAVOR=sage, use SAGE_KC_ADMIN / SAGE_KC_ADMIN_PASSWORD instead.
+#   KEYCLOAK_ADMIN_PASSWORD     (KEYCLOAK_FLAVOR=psnc only) bootstrap admin password for the native Keycloak (admin user "admin"). For KEYCLOAK_FLAVOR=sage, use SAGE_KC_ADMIN / SAGE_KC_ADMIN_PASSWORD instead.
 #   IDENTITY_HUB_DB_PASSWORD
 #   API_AUTH_KEY
 #   RUSTFS_ACCESS_KEY
 #   RUSTFS_SECRET_KEY
 #   IH_API_SUPERUSER_KEY        format: base64(user).base64(secret) — Generate with: IH_USER="super-user"; IH_SECRET="$(openssl rand -base64 32 | tr -d '\r\n')"; printf '%s.%s\n' "$(printf '%s' "$IH_USER" | openssl base64 -A)" "$(printf '%s' "$IH_SECRET" | openssl base64 -A)"
+#
+#   --- Optional settings
+#   STS_CLIENT_SECRET (optional) Vault alias name for the STS client secret — used as the KEY in Vault, NOT the secret value itself.
+#                     The actual secret is generated and stored by init:dataspace. Keep this short and stable (e.g. "sts-client-secret").
+#                     Default: "sts-client-secret"
 #
 #   Optional Docker Hub credentials for pulling images (if not public):
 #   DOCKERHUB_USER              Docker Hub username  (for image pull secret)
@@ -58,9 +57,7 @@
 ###############################################################################
 
 variables:
-  # KUBECONFIG_FILE is a File-type CI variable — GitLab writes the content to a temp
-  # file and sets the variable to its path. Do not name it KUBECONFIG as that name
-  # is reserved in some environments. Aliased to CONFIG for internal use.
+  # KUBECONFIG_FILE aliased to CONFIG for internal use
   CONFIG: $KUBECONFIG_RESEARCH
 
   IMAGE_TAG: "latest"
@@ -70,22 +67,12 @@ variables:
 
   # ---- Keycloak selection: "sage" (RCIAM/iShare) or "psnc" (native psnc-edc-mvds) ----
   KEYCLOAK_FLAVOR: "sage"
-  # SAGE Keycloak options (used only when KEYCLOAK_FLAVOR=sage)
-  SATELLITE_ID: "EU.EORI.PL12345678"
-  SATELLITE_URL: "https://pr-middleware.62.3.175.232.nip.io/v2.0.1"
-  SAGE_KC_ADMIN: "tempadmin"
-  SAGE_KC_ADMIN_PASSWORD: "tempadmin"
-  # ISHARE_CA_PEM is provided as a File-type CI/CD variable (not defined here).
+
   # Upstream repo containing the deployment playbooks
   EDC_REPO_URL: "https://gitlab.pcss.pl/daisd-public/dpi-pipelines/psnc-edc-mvds/psnc-edc-mvds.git"
   EDC_REPO_REF: "develop"
   # Path inside the cloned repo where the K8s instructions live
   WORK_DIR: /app/edc-mvds/deployment/instruction/kubernetes
-
-  # ---- deployment target ----
-  # K8S_NAMESPACE: "edc-connector"         # set as CI/CD variable
-  # CONNECTOR_ID: "my-org"                 # set as CI/CD variable
-  # DOMAIN_BASE: "example.org"             # set as CI/CD variable
 
   # ---- public hostnames ----
   CONNECTOR_HOST: "${CONNECTOR_ID}.edc.${DOMAIN_BASE}"
@@ -96,16 +83,12 @@ variables:
   CONSUMER_BACKEND_HOST: "${CONNECTOR_ID}.edc-consumer.${DOMAIN_BASE}"
   KEYVAULT_HOST: "${CONNECTOR_ID}.edc-vault.${DOMAIN_BASE}"
 
-  # ---- PVC sizes (optional — unset means PSNC upstream defaults apply) ----
-  # Set these as CI/CD variables to override. PSNC defaults: connector_db=5Gi,
-  # keycloak_db=5Gi, identity_hub_db=5Gi, vault=1Gi, storage=10Gi.
-  # WARNING: Bound PVCs cannot be shrunk — a full cleanup + redeploy is needed
-  # to reduce an already-provisioned PVC size.
-  CONNECTOR_DB_STORAGE_SIZE: "1Gi"     # e.g. "1Gi" for testing, "10Gi+" for production
-  KEYCLOAK_DB_STORAGE_SIZE: "1Gi"      # e.g. "1Gi" for testing, "5Gi+" for production
-  IDENTITY_HUB_DB_STORAGE_SIZE: "1Gi"  # e.g. "1Gi" for testing, "5Gi+" for production
-  VAULT_PVC_STORAGE_SIZE: "1Gi"        # e.g. "1Gi" — Vault stores little data; sufficient for most cases
-  STORAGE_PVC_SIZE: "2Gi"              # e.g. "2Gi" for testing, "50Gi+" for production file transfers
+  # ---- PVC sizes (optional — Set these as CI/CD variables to override — Unset means PSNC upstream defaults apply) ----
+  CONNECTOR_DB_STORAGE_SIZE: "1Gi"     # PSNC default: 5Gi
+  KEYCLOAK_DB_STORAGE_SIZE: "1Gi"      # PSNC default: 5Gi
+  IDENTITY_HUB_DB_STORAGE_SIZE: "1Gi"  # PSNC default: 5Gi
+  VAULT_PVC_STORAGE_SIZE: "1Gi"        # PSNC default: 1Gi
+  STORAGE_PVC_SIZE: "2Gi"              # PSNC default: 10Gi
 
 stages:
   - prepare
@@ -173,9 +156,7 @@ workflow:
       fi
       export IDP_ENABLED KC_BOOT_ADMIN KC_BOOT_PW
 
-    # ---- render overrides (only deployment-specific values) ----
-    # The upstream repo ships a full vars/shared_vars.yaml with sensible
-    # defaults.  We only override what differs for this deployment.
+    # ---- render overrides ----
     - |
       cat > vars/overrides.yaml <<EOF
       ---
@@ -225,11 +206,8 @@ workflow:
       [ -n "${STORAGE_PVC_SIZE:-}" ]             && echo "storage_pvc_size: \"${STORAGE_PVC_SIZE}\""                         >> vars/overrides.yaml || true
 
     # ---- patch upstream templates for strict cluster policies ----
-    # Uses Python (already installed) instead of sed for reliable multi-line edits.
     # Cluster enforces: ResourceQuota (limits.memory) + PodSecurity (runAsNonRoot).
     # Also suppresses OpenShift-only tasks (Routes) that fail on plain Kubernetes.
-    # NOTE: YAML | block strips 6 leading spaces, so Python string literals use
-    # an ind() helper to add correct indentation at runtime.
     - |
       python3 - <<'PYEOF'
       import os
@@ -301,22 +279,20 @@ workflow:
               "      when: enable_identity_hub | bool",
               "      when: false  # suppressed: OpenShift Route not available on plain Kubernetes")
 
-      # --- Connector configmap: expand EDC_TRUSTED_ISSUERS to include ISSUER_DID + TSG authority ---
-      # The upstream template hardcodes only the PSNC data-space-hub DID.
-      # We extend the array to also include the configured issuer_did and the TSG authority
-      # so EDC accepts tokens from both the PSNC hub and TSG connectors.
+      # --- Connector configmap: expand EDC_TRUSTED_ISSUERS to include ISSUER_DID (the upstream template hardcodes a PSNC hub DID) ---
       print("== Patching connector-configmap trusted issuers ==")
       CONFIGMAP = "templates/connector/connector-configmap.yaml.j2"
-      replace(CONFIGMAP,
-          "EDC_TRUSTED_ISSUERS: '{{ [\"did:web:data-space-hub-ceads-data-space.apps.bst2.paas.psnc.pl\"] | to_json }}'",
-          "EDC_TRUSTED_ISSUERS: '{{ [\"did:web:data-space-hub-ceads-data-space.apps.bst2.paas.psnc.pl\", \"did:web:authority.tsg.beta.geodan.nl\"] | to_json }}'")
+      PSNC_HUB = "did:web:data-space-hub-ceads-data-space.apps.bst2.paas.psnc.pl"
+      issuer_did = os.environ.get("ISSUER_DID", "").strip()
+      if issuer_did and issuer_did != PSNC_HUB:
+          print(f"  adding ISSUER_DID to trusted issuers: {issuer_did}")
+          replace(CONFIGMAP,
+              f"EDC_TRUSTED_ISSUERS: '{{{{ [\"{PSNC_HUB}\"] | to_json }}}}'",
+              f"EDC_TRUSTED_ISSUERS: '{{{{ [\"{PSNC_HUB}\", \"{issuer_did}\"] | to_json }}}}'")
+      else:
+          print("  ISSUER_DID not set or matches PSNC hub — skipping trusted issuers patch")
 
       # --- Repoint Keycloak realm 'Organizations' -> 'sage' (SAGE Keycloak only) ---
-      # For KEYCLOAK_FLAVOR=sage the SAGE Keycloak imports realm 'sage', so the
-      # connector token-validation URLs, the dashboard OIDC issuer, and the
-      # configure-keycloak bootstrap realm all move to 'sage'. For the native
-      # 'psnc' flavor the upstream default realm 'Organizations' is kept.
-      # replace() rewrites ALL occurrences (3x in the connector configmap).
       if os.environ.get("KEYCLOAK_FLAVOR", "sage") == "sage":
           print("== Repointing Keycloak realm Organizations -> sage ==")
           replace("templates/connector/connector-configmap.yaml.j2",
@@ -450,13 +426,7 @@ deploy:vault:
     - deploy:secrets
 
 # ---------------------------------------------------------------------------
-# deploy:sage-keycloak — RCIAM/iShare SAGE Keycloak (replaces upstream Keycloak)
-#
-# Deploys the sage Postgres + Keycloak (keycloak-sage/k8s/) plus:
-#   - configmap sage-keycloak-realm  (realm import, from keycloak-sage/realms/)
-#   - configmap sage-keycloak-init   (init.sh for the entitlements job)
-#   - secret    sage-keycloak-ca     (iShare CA chain, from ISHARE_CA_PEM)
-# All resources are labelled app=edc-connector so cleanup:edc removes them.
+# deploy:sage-keycloak — RCIAM/iShare SAGE Keycloak
 # ---------------------------------------------------------------------------
 deploy:sage-keycloak:
   image: dtzar/helm-kubectl:3.11.3
@@ -474,9 +444,6 @@ deploy:sage-keycloak:
     - export PUBLIC_SCHEME="https"
     - export KEYCLOAK_HOST="${KEYCLOAK_HOST:-keycloak.example.org}"
     - export SATELLITE_ID SATELLITE_URL SAGE_KC_ADMIN SAGE_KC_ADMIN_PASSWORD
-
-    # Ensure the namespace exists (idempotent; no-op if already created upstream).
-    - kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
     - echo "=== Realm import ConfigMap ==="
     - |
@@ -553,9 +520,6 @@ init:vault:
   stage: configure
   script:
     - cd "${WORK_DIR}"
-    # Restore Vault credentials BEFORE make deploy-env, which renders secrets/vault.secrets
-    # with empty placeholders (force: false means it only creates the file if absent).
-    # Writing our restored content first means deploy-env won't overwrite it.
     - |
       mkdir -p secrets
       if kubectl -n "${K8S_NAMESPACE}" get secret vault-pipeline-credentials >/dev/null 2>&1; then
@@ -603,16 +567,14 @@ configure:keycloak:
         printf '.'; sleep 5
       done
       echo " '${KC_REALM}' realm is ready"
+  
     # Restart the dashboard so it picks up the current app.config.json.
-    # The dashboard mounts its config via a subPath configMap volume, which does
-    # NOT hot-update, and a plain configMap change does not restart pods. Without
-    # this, a dashboard pod from an earlier run keeps serving a stale oauthIssuer
-    # (e.g. /realms/Organizations) and OIDC discovery 404s in the browser.
     - kubectl -n "${K8S_NAMESPACE}" rollout restart deployment/edc-connector-dashboard || true
     - kubectl -n "${K8S_NAMESPACE}" rollout status deployment/edc-connector-dashboard --timeout=180s || true
-    # Bootstrap the EDC clients/roles/groups/user into the selected realm
-    # (REALM_NAME and bootstrap admin creds are wired via the rendered dotenv).
+
+    # Bootstrap the EDC clients/roles/groups/user into the selected realm (REALM_NAME and bootstrap admin creds are wired via the rendered dotenv).
     - make configure-keycloak
+
     # SAGE only: RCIAM AGM member-user-attribute configuration (entitlements job).
     - |
       if [ "${KEYCLOAK_FLAVOR:-sage}" = "sage" ]; then
@@ -652,6 +614,8 @@ init:dataspace:
 
 # ---------------------------------------------------------------------------
 # configure:jsonld-contexts
+#
+# NOTE: Only needed for TSG integration. If you are not using TSG, you can safely skip this job.
 #
 # EDC's Titanium JSON-LD loader refuses to fetch remote (https://) contexts.
 # When a TSG counter-party POSTs a DSP message, it includes its TSG-specific
@@ -784,6 +748,8 @@ verify:resources:
 cleanup:edc:
   image: dtzar/helm-kubectl:3.11.3
   stage: cleanup
+  variables:
+    GATEWAY_CRD: "gateway.geodan.nl"  # Geodan gateway CRD name — override if your cluster uses a different CRD
   before_script:
     - mkdir -p ~/.kube
     - '[ -f "$CONFIG" ] || { echo "ERROR: CONFIG file not found"; exit 1; }'
@@ -793,9 +759,8 @@ cleanup:edc:
     - NS="${K8S_NAMESPACE}"
     - APP="edc-connector"
     - echo "=== Removing all EDC resources from namespace ${NS} ==="
-    # Gateways (Geodan CRD)
     - |
-      kubectl -n "${NS}" delete gateway.geodan.nl \
+      kubectl -n "${NS}" delete "${GATEWAY_CRD}" \
         ${CONNECTOR_ID}-connector \
         ${CONNECTOR_ID}-dashboard \
         ${CONNECTOR_ID}-keycloak \
