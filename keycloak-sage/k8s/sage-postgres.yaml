@@ -1,0 +1,96 @@
+###############################################################################
+# SAGE Keycloak — PostgreSQL (custom RCIAM/iShare snapshot)
+#
+# Kubernetes translation of the `postgres` service in keycloak-sage/docker-compose.yml.
+#
+# The image is a pre-seeded snapshot pulled from the EGI registry. Like the
+# docker-compose setup, this deployment is EPHEMERAL: no PersistentVolumeClaim
+# is mounted over the data directory, so the database is recreated from the
+# image on every (re)start. This intentionally mirrors the upstream compose
+# file, which declares a `postgres_data` volume but never mounts it.
+#
+# Applied via:  envsubst '${NAMESPACE}' < sage-postgres.yaml | kubectl apply -f -
+#
+# NOTE (security context): the cluster enforces PodSecurity (runAsNonRoot).
+# The uid/gid below assume the snapshot is based on the official postgres image
+# (uid 999). If the EGI snapshot uses a different uid, adjust runAsUser/fsGroup.
+###############################################################################
+apiVersion: v1
+kind: Service
+metadata:
+  name: edc-connector-sage-keycloak-db
+  namespace: ${NAMESPACE}
+  labels:
+    app: edc-connector
+    component: sage-keycloak-db
+spec:
+  selector:
+    app: edc-connector
+    component: sage-keycloak-db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edc-connector-sage-keycloak-db
+  namespace: ${NAMESPACE}
+  labels:
+    app: edc-connector
+    component: sage-keycloak-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: edc-connector
+      component: sage-keycloak-db
+  template:
+    metadata:
+      labels:
+        app: edc-connector
+        component: sage-keycloak-db
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
+      containers:
+        - name: postgres
+          image: registry.egi.eu/sage.greendealdata.eu/rciam-ishare-postgres:latest
+          imagePullPolicy: IfNotPresent
+          # Values match keycloak-sage/docker-compose.yml. The snapshot is
+          # pre-seeded, so these primarily document the expected credentials;
+          # they only take effect if the image performs a fresh initdb.
+          env:
+            - name: POSTGRES_DB
+              value: "postgres2"
+            - name: POSTGRES_USER
+              value: "postgres"
+            - name: POSTGRES_PASSWORD
+              value: "postgres"
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U postgres -d postgres2"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 20
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U postgres -d postgres2"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"

@@ -1,0 +1,66 @@
+###############################################################################
+# SAGE Keycloak — Entitlements Job
+#
+# Kubernetes translation of the `run-entitlements` service in
+# keycloak-sage/docker-compose.yml. Runs keycloak-sage/init.sh once against the
+# already-running SAGE Keycloak to configure the RCIAM group-management (AGM)
+# member-user-attribute for the `sage` realm.
+#
+# The init.sh script is provided via the ConfigMap `sage-keycloak-init`
+# (created by the pipeline from keycloak-sage/init.sh). The RCIAM Keycloak image
+# ships `curl`, which init.sh relies on.
+#
+# Jobs are immutable — the pipeline deletes any existing Job before re-applying.
+#
+# Applied via:
+#   envsubst '${NAMESPACE} ${SAGE_KC_ADMIN} ${SAGE_KC_ADMIN_PASSWORD}' \
+#     < sage-entitlements-job.yaml | kubectl apply -f -
+###############################################################################
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: edc-connector-sage-entitlements
+  namespace: ${NAMESPACE}
+  labels:
+    app: edc-connector
+    component: sage-keycloak-entitlements
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: edc-connector
+        component: sage-keycloak-entitlements
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: entitlements
+          image: registry.egi.eu/sage.greendealdata.eu/rciam-ishare-keycloak:latest
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "/tmp/init/init.sh"]
+          env:
+            # In-cluster address of the SAGE Keycloak service.
+            - name: KEYCLOAK_BASE_URL
+              value: "http://edc-connector-keycloak:8080"
+            - name: KC_ADMIN_USER
+              value: "${SAGE_KC_ADMIN}"
+            - name: KC_ADMIN_PASSWORD
+              value: "${SAGE_KC_ADMIN_PASSWORD}"
+          volumeMounts:
+            - name: init
+              mountPath: /tmp/init
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+      volumes:
+        - name: init
+          configMap:
+            name: sage-keycloak-init

@@ -1,0 +1,156 @@
+###############################################################################
+# SAGE Keycloak — Deployment + Service
+#
+# Kubernetes translation of the `keycloak` service in
+# keycloak-sage/docker-compose.yml. This RCIAM/iShare Keycloak (eosc-kc build +
+# keycloak-group-management plugin) REPLACES the upstream psnc-edc-mvds Keycloak.
+#
+# The Service is intentionally named `edc-connector-keycloak` so it is a DROP-IN
+# for the upstream Keycloak: the Geodan gateway route (gateway.yaml) and the EDC
+# connector/dashboard hostname wiring continue to work unchanged.
+#
+# Required ConfigMap/Secret (created by the pipeline in the deploy:sage-keycloak job):
+#   - configmap  sage-keycloak-realm  -> mounted at /opt/keycloak/data/import
+#   - secret     sage-keycloak-ca     -> mounted at /opt/keycloak-keys/sage
+#
+# Applied via:
+#   envsubst '${NAMESPACE} ${PUBLIC_SCHEME} ${KEYCLOAK_HOST} ${SATELLITE_ID} ${SATELLITE_URL} ${SAGE_KC_ADMIN} ${SAGE_KC_ADMIN_PASSWORD}' \
+#     < sage-keycloak.yaml | kubectl apply -f -
+###############################################################################
+apiVersion: v1
+kind: Service
+metadata:
+  name: edc-connector-keycloak
+  namespace: ${NAMESPACE}
+  labels:
+    app: edc-connector
+    component: keycloak
+spec:
+  selector:
+    app: edc-connector
+    component: keycloak
+  ports:
+    - name: keycloak-http
+      port: 8080
+      targetPort: keycloak-http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edc-connector-keycloak
+  namespace: ${NAMESPACE}
+  labels:
+    app: edc-connector
+    component: keycloak
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: edc-connector
+      component: keycloak
+  template:
+    metadata:
+      labels:
+        app: edc-connector
+        component: keycloak
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: keycloak
+          image: registry.egi.eu/sage.greendealdata.eu/rciam-ishare-keycloak:latest
+          imagePullPolicy: IfNotPresent
+          # Replicates the docker-compose entrypoint: render ishare.json from the
+          # iShare satellite values (injected by envsubst) then launch Keycloak
+          # in dev mode with realm import. The iShare plugin reads ishare.json
+          # from /opt/keycloak/conf (backed by a writable emptyDir).
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              mkdir -p /opt/keycloak/conf
+              cat > /opt/keycloak/conf/ishare.json <<'EOT'
+              {
+                "satellite-id": "${SATELLITE_ID}",
+                "satellite-url": "${SATELLITE_URL}",
+                "ishare-ca-file": "/opt/keycloak-keys/sage/ca-file.pem"
+              }
+              EOT
+              echo "=== iShare config ==="
+              cat /opt/keycloak/conf/ishare.json
+              echo "====================="
+              exec /opt/keycloak/bin/kc.sh start-dev --http-port=8080 --import-realm
+          env:
+            - name: KC_DB
+              value: "postgres"
+            - name: KC_DB_URL
+              value: "jdbc:postgresql://edc-connector-sage-keycloak-db:5432/postgres2"
+            - name: KC_DB_USERNAME
+              value: "postgres"
+            - name: KC_DB_PASSWORD
+              value: "postgres"
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+            - name: KC_METRICS_ENABLED
+              value: "true"
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            - name: KC_PROXY_HEADERS
+              value: "xforwarded"
+            - name: KC_HOSTNAME
+              value: "${PUBLIC_SCHEME}://${KEYCLOAK_HOST}"
+            - name: KC_HOSTNAME_STRICT
+              value: "false"
+            # Bootstrap (temporary) admin — used by the configure-keycloak bootstrap
+            # and by the entitlements job.
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              value: "${SAGE_KC_ADMIN}"
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              value: "${SAGE_KC_ADMIN_PASSWORD}"
+          ports:
+            - name: keycloak-http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /realms/master/.well-known/openid-configuration
+              port: keycloak-http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /realms/master/.well-known/openid-configuration
+              port: keycloak-http
+            initialDelaySeconds: 90
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          volumeMounts:
+            - name: realm-import
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+            - name: ishare-ca
+              mountPath: /opt/keycloak-keys/sage
+              readOnly: true
+            - name: conf
+              mountPath: /opt/keycloak/conf
+      volumes:
+        - name: realm-import
+          configMap:
+            name: sage-keycloak-realm
+        - name: ishare-ca
+          secret:
+            secretName: sage-keycloak-ca
+        - name: conf
+          emptyDir: {}

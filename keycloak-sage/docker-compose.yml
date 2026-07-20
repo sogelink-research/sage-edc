@@ -1,0 +1,92 @@
+services:
+  postgres:
+    # Pulling your custom Postgres snapshot from EGI
+    image: registry.egi.eu/sage.greendealdata.eu/rciam-ishare-postgres:latest
+    container_name: local-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: postgres2
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres2"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  keycloak:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: registry.egi.eu/sage.greendealdata.eu/rciam-ishare-keycloak:latest
+    container_name: local-keycloak
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: tempadmin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: tempadmin
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/postgres2
+      KC_DB_USERNAME: postgres
+      KC_DB_PASSWORD: postgres
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      SATELLITE_ID: "did:ishare:EU.NL.NTRNL-TESTPIRSAT1" # please add yours
+      SATELLITE_URL: "https://isharesat-mw.pir.test.ishareworks.nl/v2.1.1" # please add yours
+      ISHARE_CA_FILE: "/opt/keycloak-keys/sage/ca-file.pem" # please add yours
+
+    entrypoint: ["/bin/sh"]
+    command:
+      - -c
+      - |
+        mkdir -p /opt/keycloak/conf
+
+        cat > /opt/keycloak/conf/ishare.json << EOT
+        {
+          "satellite-id": "$${SATELLITE_ID}",
+          "satellite-url": "$${SATELLITE_URL}",
+          "ishare-ca-file": "$${ISHARE_CA_FILE}"
+        }
+        EOT
+
+        echo "=== iShare config created ==="
+        cat /opt/keycloak/conf/ishare.json
+        echo "============================"
+
+        exec /opt/keycloak/bin/kc.sh start-dev --http-port=8080 --import-realm
+    ports:
+      - "58080:8080"
+    volumes:
+      - ./realms:/opt/keycloak/data/import
+      - ./keys:/opt/keycloak-keys/sage
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/realms/master/.well-known/openid-configuration"]
+      interval: 10s
+      timeout: 5s
+      retries: 2
+
+  run-entitlements:
+    image: registry.egi.eu/sage.greendealdata.eu/rciam-ishare-keycloak:latest
+    container_name: local-run-entitlements
+    depends_on:
+      - keycloak
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/postgres2
+      KC_DB_USERNAME: postgres
+      KC_DB_PASSWORD: postgres
+    volumes:
+      - ./init.sh:/tmp/init.sh
+
+    # Override entrypoint to run our script
+    entrypoint: ["sh", "/tmp/init.sh"]
+
+    restart: "no"
+
+volumes:
+  postgres_data:
