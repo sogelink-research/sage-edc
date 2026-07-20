@@ -245,23 +245,23 @@ curl -X GET https://sogelink.edc-identity.beta.geodan.nl/api/version/v1/version
 Get participants:
 ```bash
 curl -X GET https://sogelink.edc-identity.beta.geodan.nl/api/identity/v1alpha/participants \
-  -H "x-api-key: ZGlkOndlYjpzb2dlbGluay5lZGMtaWRlbnRpdHkuYmV0YS5nZW9kYW4ubmw6c29nZWxpbms=.tQ7BEyTYBly9HOCErn58YdjDj8pDcv7QhOmPAE4Z0SLB1y2CLrsMRQljbkd0xLe9VfobuF7pE9ztLChX/u3hCQ=="
+  -H "x-api-key: API_AUTH_KEY"
 ```
 
 Get credentials for a participant:
 ```bash
 curl -X GET https://sogelink.edc-identity.beta.geodan.nl/api/identity/v1alpha/participants/super-user/credentials \
-  -H "x-api-key: c3VwZXItdXNlcg==.WUwzMFhIMUZkRjFkdmx3NGs4a0ZsUEhpZVlSOFlTL3NCd3pnSU1XM3VZUT0="
+  -H "x-api-key: API_AUTH_KEY"
 
 curl -X GET https://sogelink.edc-identity.beta.geodan.nl/api/identity/v1alpha/participants/did:web:sogelink.edc-identity.beta.geodan.nl:sogelink/credentials \
-  -H "x-api-key: c3VwZXItdXNlcg==.WUwzMFhIMUZkRjFkdmx3NGs4a0ZsUEhpZVlSOFlTL3NCd3pnSU1XM3VZUT0="
+  -H "x-api-key: API_AUTH_KEY"
 ```
 
 Add a verifiable credential:
 ```bash
 curl -X POST \
   "https://sogelink.edc-identity.beta.geodan.nl/api/identity/v1alpha/participants/ZGlkOndlYjpzb2dlbGluay5lZGMtaWRlbnRpdHkuYmV0YS5nZW9kYW4ubmw6c29nZWxpbms=/credentials" \
-  -H "x-api-key: c3VwZXItdXNlcg==.WUwzMFhIMUZkRjFkdmx3NGs4a0ZsUEhpZVlSOFlTL3NCd3pnSU1XM3VZUT0=" \
+  -H "x-api-key: API_AUTH_KEY" \
   -H "Content-Type: application/json" \
   --data-binary "@credential.json"
 ```
@@ -269,5 +269,5 @@ curl -X POST \
 Delete a verifiable credential:
 ```bash
 curl -X DELETE https://sogelink.edc-identity.beta.geodan.nl/api/identity/v1alpha/participants/super-user/credentials/c02215b1-9d57-4445-bb1f-3b673b74b605 \
-  -H "x-api-key: c3VwZXItdXNlcg==.WUwzMFhIMUZkRjFkdmx3NGs4a0ZsUEhpZVlSOFlTL3NCd3pnSU1XM3VZUT0="
+  -H "x-api-key: API_AUTH_KEY"
 ```
