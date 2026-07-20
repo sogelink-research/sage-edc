@@ -18,9 +18,21 @@
 #   CATALOG_API_KEY             catalog API key (can be empty)
 #   DSH_API_KEY                 data-space-hub API key (can be empty)
 #
-#   ENABLE_IDENTITY_PROVIDER    true/false (default: true)
 #   ENABLE_IDENTITY_HUB         true/false (default: false)
 #   ENABLE_STORAGE              true/false (default: true)
+#
+#   --- Keycloak selection ---
+#   KEYCLOAK_FLAVOR             "sage" (default) or "psnc" — which Keycloak to deploy/configure
+#                               sage: RCIAM/iShare "sage" Keycloak (keycloak-sage/)
+#                               psnc: the native Keycloak bundled with psnc-edc-mvds
+#
+#   --- SAGE Keycloak options (used only when KEYCLOAK_FLAVOR=sage) ---
+#   SATELLITE_ID                iShare satellite id      (default: EU.EORI.PL12345678)
+#   SATELLITE_URL               iShare satellite URL     (default: https://pr-middleware.62.3.175.232.nip.io/v2.0.1)
+#   ISHARE_CA_PEM               File-type CI variable containing the iShare CA certificate chain (PEM).
+#                               Mounted into Keycloak at /opt/keycloak-keys/sage/ca-file.pem
+#   SAGE_KC_ADMIN               bootstrap admin username (default: tempadmin)
+#   SAGE_KC_ADMIN_PASSWORD      bootstrap admin password (default: tempadmin)
 #
 #   STS_CLIENT_SECRET (optional) Vault alias name for the STS client secret — used as the KEY in Vault, NOT the secret value itself.
 #                     The actual secret is generated and stored by init:dataspace. Keep this short and stable (e.g. "sts-client-secret").
@@ -28,8 +40,9 @@
 #
 # Secrets — generate with: openssl rand -base64 32 | tr -d '\n'
 #   CONNECTOR_DB_PASSWORD
-#   KEYCLOAK_DB_PASSWORD
-#   KEYCLOAK_ADMIN_PASSWORD
+#   KEYCLOAK_DB_PASSWORD        (KEYCLOAK_FLAVOR=psnc only) password for the native Keycloak's Postgres DB
+#   KEYCLOAK_ADMIN_PASSWORD     (KEYCLOAK_FLAVOR=psnc only) bootstrap admin password for the native Keycloak (admin user "admin").
+#                               For KEYCLOAK_FLAVOR=sage, use SAGE_KC_ADMIN / SAGE_KC_ADMIN_PASSWORD instead.
 #   IDENTITY_HUB_DB_PASSWORD
 #   API_AUTH_KEY
 #   RUSTFS_ACCESS_KEY
@@ -51,10 +64,18 @@ variables:
   CONFIG: $KUBECONFIG_RESEARCH
 
   IMAGE_TAG: "latest"
-  ENABLE_IDENTITY_PROVIDER: "true"  # Keycloak-based identity provider for EDC (required by dashboard)
   ENABLE_IDENTITY_HUB: "true"       # Identity Hub component for data space integration (optional)
   ENABLE_STORAGE: "true"            # RustFS-based storage service for EDC (optional, but recommended for real workloads)
   ANSIBLE_FORCE_COLOR: "true"       # Force color output in Ansible logs for better readability
+
+  # ---- Keycloak selection: "sage" (RCIAM/iShare) or "psnc" (native psnc-edc-mvds) ----
+  KEYCLOAK_FLAVOR: "sage"
+  # SAGE Keycloak options (used only when KEYCLOAK_FLAVOR=sage)
+  SATELLITE_ID: "EU.EORI.PL12345678"
+  SATELLITE_URL: "https://pr-middleware.62.3.175.232.nip.io/v2.0.1"
+  SAGE_KC_ADMIN: "tempadmin"
+  SAGE_KC_ADMIN_PASSWORD: "tempadmin"
+  # ISHARE_CA_PEM is provided as a File-type CI/CD variable (not defined here).
   # Upstream repo containing the deployment playbooks
   EDC_REPO_URL: "https://gitlab.pcss.pl/daisd-public/dpi-pipelines/psnc-edc-mvds/psnc-edc-mvds.git"
   EDC_REPO_REF: "develop"
@@ -137,6 +158,21 @@ workflow:
     # ---- enter working directory ----
     - cd "${WORK_DIR}"
 
+    # ---- select Keycloak flavor (sage | psnc) ----
+    # sage -> upstream Keycloak disabled; SAGE Keycloak deployed by deploy:sage-keycloak
+    # psnc -> native psnc-edc-mvds Keycloak deployed by the upstream playbooks
+    - |
+      if [ "${KEYCLOAK_FLAVOR:-sage}" = "psnc" ]; then
+        IDP_ENABLED=true
+        KC_BOOT_ADMIN="admin"
+        KC_BOOT_PW="${KEYCLOAK_ADMIN_PASSWORD:-change-me}"
+      else
+        IDP_ENABLED=false
+        KC_BOOT_ADMIN="${SAGE_KC_ADMIN}"
+        KC_BOOT_PW="${SAGE_KC_ADMIN_PASSWORD}"
+      fi
+      export IDP_ENABLED KC_BOOT_ADMIN KC_BOOT_PW
+
     # ---- render overrides (only deployment-specific values) ----
     # The upstream repo ships a full vars/shared_vars.yaml with sensible
     # defaults.  We only override what differs for this deployment.
@@ -150,7 +186,7 @@ workflow:
       image_pull_secret_name: "${DOCKERHUB_USER:+dockerhub-creds}"
       image_pull_policy: "Always"
 
-      enable_identity_provider: ${ENABLE_IDENTITY_PROVIDER}
+      enable_identity_provider: ${IDP_ENABLED}   # psnc flavor -> true (native Keycloak); sage flavor -> false (SAGE Keycloak deployed separately)
       enable_identity_hub: ${ENABLE_IDENTITY_HUB}
       enable_storage: ${ENABLE_STORAGE}
       enable_vault: true
@@ -274,6 +310,26 @@ workflow:
       replace(CONFIGMAP,
           "EDC_TRUSTED_ISSUERS: '{{ [\"did:web:data-space-hub-ceads-data-space.apps.bst2.paas.psnc.pl\"] | to_json }}'",
           "EDC_TRUSTED_ISSUERS: '{{ [\"did:web:data-space-hub-ceads-data-space.apps.bst2.paas.psnc.pl\", \"did:web:authority.tsg.beta.geodan.nl\"] | to_json }}'")
+
+      # --- Repoint Keycloak realm 'Organizations' -> 'sage' (SAGE Keycloak only) ---
+      # For KEYCLOAK_FLAVOR=sage the SAGE Keycloak imports realm 'sage', so the
+      # connector token-validation URLs, the dashboard OIDC issuer, and the
+      # configure-keycloak bootstrap realm all move to 'sage'. For the native
+      # 'psnc' flavor the upstream default realm 'Organizations' is kept.
+      # replace() rewrites ALL occurrences (3x in the connector configmap).
+      if os.environ.get("KEYCLOAK_FLAVOR", "sage") == "sage":
+          print("== Repointing Keycloak realm Organizations -> sage ==")
+          replace("templates/connector/connector-configmap.yaml.j2",
+                  "/realms/Organizations/protocol/openid-connect/certs",
+                  "/realms/sage/protocol/openid-connect/certs")
+          replace("templates/dashboard/dashboard-configmap.yaml.j2",
+                  "/realms/Organizations",
+                  "/realms/sage")
+          replace("templates/env/dotenv.j2",
+                  "REALM_NAME={{ 'Organizations' | to_json }}",
+                  "REALM_NAME={{ 'sage' | to_json }}")
+      else:
+          print("== KEYCLOAK_FLAVOR=psnc: keeping realm 'Organizations' ==")
       PYEOF
 
     - |
@@ -302,8 +358,8 @@ workflow:
           postgres_db: "keycloak"
 
         keycloak:
-          admin: "admin"
-          admin_password: "${KEYCLOAK_ADMIN_PASSWORD:-change-me}"
+          admin: "${KC_BOOT_ADMIN}"
+          admin_password: "${KC_BOOT_PW}"
           db: "postgres"
           db_schema: "public"
           db_url: "edc-connector-keycloak-db"
@@ -394,6 +450,74 @@ deploy:vault:
     - deploy:secrets
 
 # ---------------------------------------------------------------------------
+# deploy:sage-keycloak — RCIAM/iShare SAGE Keycloak (replaces upstream Keycloak)
+#
+# Deploys the sage Postgres + Keycloak (keycloak-sage/k8s/) plus:
+#   - configmap sage-keycloak-realm  (realm import, from keycloak-sage/realms/)
+#   - configmap sage-keycloak-init   (init.sh for the entitlements job)
+#   - secret    sage-keycloak-ca     (iShare CA chain, from ISHARE_CA_PEM)
+# All resources are labelled app=edc-connector so cleanup:edc removes them.
+# ---------------------------------------------------------------------------
+deploy:sage-keycloak:
+  image: dtzar/helm-kubectl:3.11.3
+  stage: deploy-infra
+  before_script:
+    - apk add --no-cache gettext
+    - mkdir -p ~/.kube
+    - '[ -f "$CONFIG" ] || { echo "ERROR: CONFIG file not found"; exit 1; }'
+    - cp "$CONFIG" ~/.kube/config
+    - chmod 600 ~/.kube/config
+  script:
+    - set -eu
+    - cd "${CI_PROJECT_DIR}"
+    - export NAMESPACE="${K8S_NAMESPACE}"
+    - export PUBLIC_SCHEME="https"
+    - export KEYCLOAK_HOST="${KEYCLOAK_HOST:-keycloak.example.org}"
+    - export SATELLITE_ID SATELLITE_URL SAGE_KC_ADMIN SAGE_KC_ADMIN_PASSWORD
+
+    # Ensure the namespace exists (idempotent; no-op if already created upstream).
+    - kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+
+    - echo "=== Realm import ConfigMap ==="
+    - |
+      kubectl -n "${NAMESPACE}" create configmap sage-keycloak-realm \
+        --from-file=sage-realm.json=keycloak-sage/realms/sage-realm.json \
+        --dry-run=client -o yaml | kubectl apply -f -
+    - kubectl -n "${NAMESPACE}" label configmap sage-keycloak-realm app=edc-connector --overwrite
+
+    - echo "=== Entitlements init.sh ConfigMap ==="
+    - |
+      kubectl -n "${NAMESPACE}" create configmap sage-keycloak-init \
+        --from-file=init.sh=keycloak-sage/init.sh \
+        --dry-run=client -o yaml | kubectl apply -f -
+    - kubectl -n "${NAMESPACE}" label configmap sage-keycloak-init app=edc-connector --overwrite
+
+    - echo "=== iShare CA Secret ==="
+    - |
+      if [ -z "${ISHARE_CA_PEM:-}" ]; then
+        echo "ERROR: ISHARE_CA_PEM is not set (provide the iShare CA chain as a File-type CI variable)"; exit 1
+      fi
+      if [ -f "${ISHARE_CA_PEM}" ]; then
+        CA_SRC="${ISHARE_CA_PEM}"
+      else
+        printf '%s' "${ISHARE_CA_PEM}" > /tmp/ca-file.pem; CA_SRC=/tmp/ca-file.pem
+      fi
+      kubectl -n "${NAMESPACE}" create secret generic sage-keycloak-ca \
+        --from-file=ca-file.pem="${CA_SRC}" \
+        --dry-run=client -o yaml | kubectl apply -f -
+    - kubectl -n "${NAMESPACE}" label secret sage-keycloak-ca app=edc-connector --overwrite
+
+    - echo "=== SAGE Postgres ==="
+    - envsubst '${NAMESPACE}' < keycloak-sage/k8s/sage-postgres.yaml | kubectl apply -f -
+
+    - echo "=== SAGE Keycloak ==="
+    - envsubst '${NAMESPACE} ${PUBLIC_SCHEME} ${KEYCLOAK_HOST} ${SATELLITE_ID} ${SATELLITE_URL} ${SAGE_KC_ADMIN} ${SAGE_KC_ADMIN_PASSWORD}' < keycloak-sage/k8s/sage-keycloak.yaml | kubectl apply -f -
+  needs:
+    - deploy:env
+  rules:
+    - if: '$KEYCLOAK_FLAVOR == "sage"'
+
+# ---------------------------------------------------------------------------
 # Stage: deploy-services — workloads + ingress / routes
 # ---------------------------------------------------------------------------
 deploy:services:
@@ -469,12 +593,39 @@ configure:keycloak:
     - make deploy-env ANSIBLE_ARGS="-e @vars/overrides.yaml"
     - echo "Waiting for Keycloak deployment to be ready..."
     - kubectl -n "${K8S_NAMESPACE}" rollout status deployment/edc-connector-keycloak --timeout=300s
+    - |
+      if [ "${KEYCLOAK_FLAVOR:-sage}" = "psnc" ]; then KC_REALM=Organizations; else KC_REALM=sage; fi
+      echo "Keycloak flavor: ${KEYCLOAK_FLAVOR:-sage} — waiting for realm '${KC_REALM}'..."
+      KC_WELL_KNOWN="https://${KEYCLOAK_HOST}/realms/${KC_REALM}/.well-known/openid-configuration"
+      i=0
+      until [ "$(curl -s -o /dev/null -w '%{http_code}' "$KC_WELL_KNOWN")" = "200" ]; do
+        i=$((i+1)); [ "$i" -ge 60 ] && { echo "ERROR: '${KC_REALM}' realm not ready after timeout"; exit 1; }
+        printf '.'; sleep 5
+      done
+      echo " '${KC_REALM}' realm is ready"
+    # Bootstrap the EDC clients/roles/groups/user into the selected realm
+    # (REALM_NAME and bootstrap admin creds are wired via the rendered dotenv).
     - make configure-keycloak
+    # SAGE only: RCIAM AGM member-user-attribute configuration (entitlements job).
+    - |
+      if [ "${KEYCLOAK_FLAVOR:-sage}" = "sage" ]; then
+        cd "${CI_PROJECT_DIR}"
+        export NAMESPACE="${K8S_NAMESPACE}"
+        export SAGE_KC_ADMIN SAGE_KC_ADMIN_PASSWORD
+        kubectl -n "${NAMESPACE}" delete job edc-connector-sage-entitlements --ignore-not-found
+        envsubst '${NAMESPACE} ${SAGE_KC_ADMIN} ${SAGE_KC_ADMIN_PASSWORD}' < keycloak-sage/k8s/sage-entitlements-job.yaml | kubectl apply -f -
+        kubectl -n "${NAMESPACE}" wait --for=condition=complete job/edc-connector-sage-entitlements --timeout=300s
+      else
+        echo "KEYCLOAK_FLAVOR=psnc — skipping SAGE entitlements job"
+      fi
   needs:
+    - job: deploy:sage-keycloak
+      optional: true
     - deploy:services
     - deploy:gateways
   rules:
-    - if: '$ENABLE_IDENTITY_PROVIDER == "true"'
+    - if: '$KEYCLOAK_FLAVOR == "sage"'
+    - if: '$KEYCLOAK_FLAVOR == "psnc"'
 
 init:dataspace:
   extends: .deploy_base
@@ -658,6 +809,8 @@ cleanup:edc:
     - kubectl -n "${NS}" delete secret -l app="${APP}" --ignore-not-found
     - kubectl -n "${NS}" delete secret dockerhub-creds vault-pipeline-credentials --ignore-not-found
     - kubectl -n "${NS}" delete configmap edc-jsonld-contexts --ignore-not-found
+    # SAGE Keycloak entitlements Job (not covered by the app label selector)
+    - kubectl -n "${NS}" delete job edc-connector-sage-entitlements --ignore-not-found
     # PVCs (database + vault data)
     - kubectl -n "${NS}" delete pvc -l app="${APP}" --ignore-not-found
     # ServiceAccounts
