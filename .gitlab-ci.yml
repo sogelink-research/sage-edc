@@ -603,6 +603,13 @@ configure:keycloak:
         printf '.'; sleep 5
       done
       echo " '${KC_REALM}' realm is ready"
+    # Restart the dashboard so it picks up the current app.config.json.
+    # The dashboard mounts its config via a subPath configMap volume, which does
+    # NOT hot-update, and a plain configMap change does not restart pods. Without
+    # this, a dashboard pod from an earlier run keeps serving a stale oauthIssuer
+    # (e.g. /realms/Organizations) and OIDC discovery 404s in the browser.
+    - kubectl -n "${K8S_NAMESPACE}" rollout restart deployment/edc-connector-dashboard || true
+    - kubectl -n "${K8S_NAMESPACE}" rollout status deployment/edc-connector-dashboard --timeout=180s || true
     # Bootstrap the EDC clients/roles/groups/user into the selected realm
     # (REALM_NAME and bootstrap admin creds are wired via the rendered dotenv).
     - make configure-keycloak
