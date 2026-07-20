@@ -58,7 +58,7 @@
 
 variables:
   # KUBECONFIG_FILE aliased to CONFIG for internal use
-  CONFIG: $KUBECONFIG_FILE
+  CONFIG: $KUBECONFIG_RESEARCH
 
   IMAGE_TAG: "latest"
   ENABLE_IDENTITY_HUB: "true"       # Identity Hub component for data space integration (optional)
